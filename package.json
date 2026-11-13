@@ -1,0 +1,25 @@
+{
+  "name": "artillery-command",
+  "version": "1.0.0",
+  "description": "A side-view artillery puzzle game for mobile browsers",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint src --ext ts",
+    "typecheck": "tsc --noEmit",
+    "generate:icons": "node scripts/generate-icons.cjs"
+  },
+  "dependencies": {
+    "canvas": "^3.2.3",
+    "matter-js": "^0.20.0",
+    "phaser": "^3.80.1"
+  },
+  "devDependencies": {
+    "@types/matter-js": "^0.19.7",
+    "typescript": "^5.4.0",
+    "vite": "^5.2.0",
+    "vite-plugin-static-copy": "^1.0.0"
+  }
+}
