@@ -206,6 +206,262 @@ export class EffectsSystem {
     });
   }
 
+  // === ADVANCED DESTRUCTION EFFECTS ===
+  
+  emitMoltenDrip(x: number, y: number, intensity: number = 1): void {
+    if (this.reducedEffects) return;
+    
+    const dripCount = Math.floor(3 * intensity);
+    for (let i = 0; i < dripCount; i++) {
+      const angle = -Math.PI / 2 + (Math.random() - 0.5) * 0.5; // Downward with slight spread
+      const speed = 20 + Math.random() * 50;
+      this.particles.push({
+        x: x + (Math.random() - 0.5) * 10,
+        y: y + 5,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        color: 0xffffff,
+        alpha: 0.9,
+        scale: 0.3 + Math.random() * 0.4,
+        life: 1000 + Math.random() * 2000,
+        maxLife: 3000,
+        gravity: 400,
+      });
+      
+      // Orange/white hot core
+      this.particles.push({
+        x: x + (Math.random() - 0.5) * 8,
+        y: y + 3,
+        vx: Math.cos(angle) * speed * 0.8,
+        vy: Math.sin(angle) * speed * 0.8,
+        color: 0xffaa00,
+        alpha: 1,
+        scale: 0.2,
+        life: 800,
+        maxLife: 1500,
+        gravity: 400,
+      });
+    }
+  }
+  
+  emitBendingStress(x: number, y: number, angle: number, intensity: number): void {
+    if (this.reducedEffects) return;
+    
+    // Stress lines showing metal fatigue
+    const lineCount = Math.floor(4 * intensity);
+    for (let i = 0; i < lineCount; i++) {
+      const perpAngle = angle + Math.PI / 2;
+      const offset = (Math.random() - 0.5) * 30;
+      const x1 = x + Math.cos(perpAngle) * offset;
+      const y1 = y + Math.sin(perpAngle) * offset;
+      const length = 15 + Math.random() * 25;
+      
+      this.particles.push({
+        x: x1, y: y1,
+        vx: 0, vy: 0,
+        color: 0xffaa00,
+        alpha: 0.6 * intensity,
+        scale: 0.8,
+        life: 300 + Math.random() * 500,
+        maxLife: 800,
+        gravity: 0,
+        // Custom render as line
+        isLine: true,
+        lineAngle: angle,
+        lineLength: length,
+      });
+    }
+  }
+  
+  emitStructuralFailure(x: number, y: number, severity: number): void {
+    if (this.reducedEffects) return;
+    
+    // Sudden structural collapse effect
+    const particleCount = Math.floor(15 * severity);
+    for (let i = 0; i < particleCount; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 50 + Math.random() * 200 * severity;
+      this.particles.push({
+        x, y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        color: Phaser.Math.Between(0, 1) ? 0xff3344 : 0xffaa00,
+        alpha: 1,
+        scale: 0.4 + Math.random() * 0.6,
+        life: 500 + Math.random() * 1000,
+        maxLife: 1500,
+        gravity: 300,
+      });
+    }
+    
+    // Shockwave ring
+    this.particles.push({
+      x, y,
+      vx: 0, vy: 0,
+      color: 0xff3344,
+      alpha: 0.8,
+      scale: 0.5,
+      life: 200,
+      maxLife: 600,
+      gravity: 0,
+      isRing: true,
+      ringMaxRadius: 80 * severity,
+    });
+  }
+  
+  emitWhiteHotZone(x: number, y: number, radius: number): void {
+    if (this.reducedEffects) return;
+    
+    // Intense white-hot particles for Meltdown
+    for (let i = 0; i < 12; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = Math.random() * radius;
+      this.particles.push({
+        x: x + Math.cos(angle) * dist,
+        y: y + Math.sin(angle) * dist,
+        vx: 0, vy: 0,
+        color: 0xffffff,
+        alpha: 0.9,
+        scale: 0.5 + Math.random() * 0.5,
+        life: 100 + Math.random() * 300,
+        maxLife: 400,
+        gravity: 0,
+      });
+    }
+    
+    // Expanding white ring
+    this.particles.push({
+      x, y,
+      vx: 0, vy: 0,
+      color: 0xffffff,
+      alpha: 0.6,
+      scale: 0.3,
+      life: 50,
+      maxLife: 2000,
+      gravity: 0,
+      isRing: true,
+      ringMaxRadius: radius * 1.5,
+    });
+  }
+  
+  emitMetalSparks(x: number, y: number, angle: number, intensity: number, isGrinding: boolean = false): void {
+    if (this.reducedEffects) return;
+    
+    const sparkCount = Math.floor((isGrinding ? 8 : 5) * intensity);
+    for (let i = 0; i < sparkCount; i++) {
+      const spread = angle + (Math.random() - 0.5) * (isGrinding ? Math.PI / 3 : Math.PI / 6);
+      const speed = isGrinding ? 80 + Math.random() * 120 : 100 + Math.random() * 300;
+      this.particles.push({
+        x, y,
+        vx: Math.cos(spread) * speed,
+        vy: Math.sin(spread) * speed,
+        color: Phaser.Math.Between(0, 1) ? 0xffff00 : 0xffaa00,
+        alpha: 1,
+        scale: 0.15 + Math.random() * 0.2,
+        life: isGrinding ? 200 + Math.random() * 300 : 100 + Math.random() * 200,
+        maxLife: isGrinding ? 500 : 300,
+        gravity: isGrinding ? 100 : 200,
+      });
+    }
+  }
+  
+  emitFractureCrack(x: number, y: number, angle: number, length: number): void {
+    if (this.reducedEffects) return;
+    
+    // Crack propagation particles
+    const segments = Math.floor(length / 5);
+    for (let i = 0; i < segments; i++) {
+      const t = i / segments;
+      const cx = x + Math.cos(angle) * length * t;
+      const cy = y + Math.sin(angle) * length * t;
+      
+      this.particles.push({
+        x: cx + (Math.random() - 0.5) * 3,
+        y: cy + (Math.random() - 0.5) * 3,
+        vx: 0, vy: 0,
+        color: 0x333333,
+        alpha: 0.8,
+        scale: 0.4,
+        life: 1000,
+        maxLife: 3000,
+        gravity: 0,
+      });
+    }
+  }
+  
+  emitPlasmaJet(x: number, y: number, angleDeg: number, length: number): void {
+    if (this.reducedEffects) return;
+    
+    // HEAT/APHE plasma jet effect
+    const angle = Phaser.Math.DegToRad(angleDeg);
+    const steps = Math.ceil(length / 8);
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const px = x + Math.cos(angle) * length * t;
+      const py = y + Math.sin(angle) * length * t;
+      
+      // Core jet
+      this.particles.push({
+        x: px, y: py,
+        vx: 0, vy: 0,
+        color: t < 0.3 ? 0xffffff : (t < 0.6 ? 0xffaa00 : 0xff4400),
+        alpha: 0.9 * (1 - t * 0.5),
+        scale: 0.6 * (1 - t * 0.3),
+        life: 100 + Math.random() * 100,
+        maxLife: 200,
+        gravity: 0,
+      });
+      
+      // Side glow
+      if (Math.random() < 0.3) {
+        this.particles.push({
+          x: px + (Math.random() - 0.5) * 6,
+          y: py + (Math.random() - 0.5) * 6,
+          vx: 0, vy: 0,
+          color: 0xff6600,
+          alpha: 0.5,
+          scale: 0.4,
+          life: 200,
+          maxLife: 400,
+          gravity: 0,
+        });
+      }
+    }
+  }
+  
+  emitHESHSpallBurst(x: number, y: number, directionAngle: number): void {
+    if (this.reducedEffects) return;
+    
+    // Rear-face spalling burst
+    for (let i = 0; i < 10; i++) {
+      const angle = directionAngle + Math.PI + (Math.random() - 0.5) * Math.PI / 2;
+      const speed = 150 + Math.random() * 300;
+      this.particles.push({
+        x, y,
+        vx: Math.cos(angle) * speed,
+        vy: Math.sin(angle) * speed,
+        color: Phaser.Math.Between(0, 2) === 0 ? 0xffffff : 0xffaa00,
+        alpha: 1,
+        scale: 0.3 + Math.random() * 0.4,
+        life: 300 + Math.random() * 700,
+        maxLife: 1000,
+        gravity: 200,
+      });
+    }
+    
+    // Central flash
+    this.particles.push({
+      x, y,
+      vx: 0, vy: 0,
+      color: 0xffffff,
+      alpha: 1,
+      scale: 1.5,
+      life: 50,
+      maxLife: 150,
+      gravity: 0,
+    });
+  }
+
   createDebrisPiece(x: number, y: number, material: string, size: number, angle: number, speed: number): Phaser.GameObjects.Graphics | null {
     if (this.reducedEffects) return null;
 

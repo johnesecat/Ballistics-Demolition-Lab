@@ -3,7 +3,7 @@ import { resolve } from 'path';
 import { viteStaticCopy } from 'vite-plugin-static-copy';
 
 export default defineConfig({
-  base: '/artillery-command/',
+  base: '/Ballistics-Demolition-Lab/',
   build: {
     outDir: 'dist',
     assetsDir: 'assets',
