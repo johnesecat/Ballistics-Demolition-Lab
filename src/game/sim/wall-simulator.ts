@@ -6,7 +6,7 @@ import { Rng, hash32 } from '../rng';
 import type { StageDefinition, StageSnapshot } from '../stages/types';
 import { cloneSnapshot } from '../stages/types';
 import { launchVelocity, muzzlePosition, sweepCircleEntry } from './collision';
-import { fractureWall, penetrateWalls, raySpanInWall, spawnFragmentBodies, traceWalls, type FragmentBody, type Point, type WallContact } from './fracture';
+import { fractureWall, fractureWallBand, penetrateWalls, raySpanInWall, spawnFragmentBodies, traceWalls, type FractureFragment, type FragmentBody, type Point, type WallContact } from './fracture';
 import type { DamageEvent, EffectEvent, ImpactInfo, ProjectileFrame, ShotInput, ShotResult } from './types';
 import { addHeat, cloneWallState, detachUnsupported, pointInPolygon, pointInWalls, wallsFromSnapshot, type WallState } from './walls';
 import { survivorHeatPoint } from './heat-anchor';
@@ -94,8 +94,13 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
   const messages: string[] = [];
   const bodies: FragmentBody[] = [];
   let impact: ImpactInfo | null = null;
+  // The impact the shot actually ended on. A round that crosses a thin layer
+  // and flies on leaves a bore at the entry but no wreck there: the wreck is
+  // only the terminal pancake.
+  let terminalImpact: ImpactInfo | null = null;
   let firstContact: ImpactInfo | null = null;
   let impactTime = 0;
+  const flightBodies: Array<FragmentBody & { spawnT: number }> = [];
   let simTime = 0;
   let coreDamage = 0;
   let cellDamageArea = 0;
@@ -131,6 +136,7 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
         kind: 'core', contactX: hx, contactY: hy,
       };
       firstContact = impact;
+      terminalImpact = impact;
       impactVx = vx;
       impactVy = vy;
       coreDamage += 40 * (ammo.ratings?.impact ?? 1);
@@ -204,6 +210,18 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
           }
           crossed += 1;
           const exit = { x: entry.x + dir.x * (span + ammo.flight.radius + 1.2), y: entry.y + dir.y * (span + ammo.flight.radius + 1.2) };
+          // A round that crosses a layer bores its own diameter through it.
+          // Without this a fast shell passed through a plate and left it
+          // untouched, which is not physical: the hole is the visible result
+          // of penetration, not just the speed cost.
+          const chips = boreWall(state, wall?.id ?? layer.wallId, entry, exit, Math.max(2.6, ammo.flight.radius * 2));
+          if (chips.length > 0) {
+            const boreBodies = spawnFragmentBodies(chips, entry, { x: dir.x * 70, y: dir.y * 70 - 26 }, seedFrom(simTime * 1000, rng), 0.18);
+            bodies.push(...boreBodies);
+            flightBodies.push(...boreBodies.map((b) => ({ ...b, spawnT: simTime * 1000 })));
+            cellDamageArea += chips.length;
+            damageEvents.push({ t: simTime * 1000, cells: [], wallState: cloneWallState(state), spawnedBodies: boreBodies.map((b) => ({ ...b })), x: entry.x, y: entry.y, label: 'PENETRATION' });
+          }
           effects.push({ t: simTime * 1000, kind: 'penetrate', x: exit.x, y: exit.y, angle: Math.atan2(dir.y, dir.x), family: ammo.vfx.family, material: mat });
           trajectory.push({ x: exit.x, y: exit.y, angle: Math.atan2(vy, vx) });
           frames.push({ t: simTime * 1000, x: exit.x, y: exit.y, angle: Math.atan2(vy, vx), scale: 1, visible: true, squash: pBody.squash, layers: pBody.layers });
@@ -236,6 +254,7 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
           contactX: stopContact.x, contactY: stopContact.y,
           wallId: stopContact.wallId,
         };
+        terminalImpact = impact;
         effects.push({ t: simTime * 1000, kind: 'impact', x: stopContact.x, y: stopContact.y, family: ammo.vfx.family, angle: Math.atan2(cny, cnx), material: stopContact.material });
       }
       if (stoppedByLayer) break;
@@ -250,6 +269,7 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
       const gx = x + (nx - x) * t;
       impactTime = simTime - dt * (1 - t);
       impact = { x: gx, y: floor, nx: 0, ny: -1, kind: 'ground', contactX: gx, contactY: floor };
+      terminalImpact = impact;
       impactVx = vx;
       impactVy = vy;
       if (!firstContact) firstContact = impact;
@@ -265,7 +285,7 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
   }
 
   const phaseWallStates: import('./types').WallPhaseRecord[] = [];
-  const timedBodies: Array<FragmentBody & { spawnT: number }> = [];
+  const timedBodies: Array<FragmentBody & { spawnT: number }> = [...flightBodies];
   const bodiesBefore = bodies.length;
   void bodiesBefore;
   if (impact && (impact.kind === 'cell' || impact.kind === 'ground')) {
@@ -302,8 +322,8 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
   // The casing keeps its physics after contact. Flight frames stop at the
   // impact, so a deterministic wreck timeline carries the peeled, tumbling
   // shell through the rest of the replay instead of freezing it on the wall.
-  const wreck = impact && (impact.kind === 'cell' || impact.kind === 'ground')
-    ? buildWreckFrames(impact, impactVx, impactVy, ammo, impactTime * 1000)
+  const wreck = terminalImpact && (terminalImpact.kind === 'cell' || terminalImpact.kind === 'ground')
+    ? buildWreckFrames(terminalImpact, impactVx, impactVy, ammo, impactTime * 1000)
     : [];
 
   const core = { ...snapshot.core };
@@ -350,6 +370,19 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
     trajectory,
   };
   return { result, wallState: state, bodies };
+}
+
+/** Punch the round's own diameter through a wall it crosses. */
+function boreWall(state: WallState, wallId: string | undefined, from: Point, to: Point, width: number): FractureFragment[] {
+  if (!wallId) return [];
+  let chips: FractureFragment[] = [];
+  state.walls = state.walls.map((wall) => {
+    if (wall.id !== wallId) return wall;
+    const cut = fractureWallBand(wall, from, to, width, FRAGMENT_SIZE);
+    chips = cut.fragments;
+    return cut.fragments.length > 0 ? { ...cut.wall, anchored: false } : cut.wall;
+  });
+  return chips;
 }
 
 function buildWreckFrames(

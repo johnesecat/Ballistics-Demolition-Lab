@@ -607,6 +607,10 @@ function runBuilder(def: StageDefinition, seed: number): Draft {
     }
   }
 
+  // One wall per touching run, not one per cell: a bunker emitted as 833
+  // single-cell walls made blasts and the support solve take seconds and let
+  // a round "bore" each tile independently.
+  builder.mergeAdjacent();
   builder.removeFloating();
 
   // The expose-core mission measures the actual front shield that guards the

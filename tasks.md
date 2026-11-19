@@ -94,7 +94,10 @@ merged rendering.
   recomputed from walls as diagnostics only). Caps enforced as world units:
   wood 4, steel 5, armor 7, metal 4. tsc + build + `test-fracture` +
   `test-walls` green (test-walls area tolerance widened to 12% for the
-  angled truss brace).
+  angled truss brace). **2026-11-19:** `mergeWallRects()` now coalesces
+  touching same-material rects before support validation, so generated
+  stages are real wall objects rather than one wall per cell (AH-02
+  833 -> 66 walls; a full shot 3.4 s -> ~29 ms). Deterministic id order.
 - [x] **P0-10b Replay payload retired.** `ShotResult.initialGrid` deleted;
   CoreView/RelayView/DemolitionDirector grid params removed.
 - [x] **P1-1 Test range = first map.** AH-01 authored as the video range
@@ -175,8 +178,11 @@ brick orange-brown, wood brown) with no per-cell texture.
   never a scaled sprite. The shell keeps its physics after contact: the
   solver emits a deterministic wreck timeline (57 frames) so the casing
   peels off, tumbles and settles on the seabed instead of freezing at the
-  wall. Kinetic trail is the footage's warm orange/white dashed pair.
-  Verified in a live close-up at AH-01 (flight, impact, falling wreck).
+  wall. The wreck is only spawned on a terminal impact: a round that crosses
+  a thin layer and flies on bores a real diameter hole with cube chips and
+  keeps its flight frames. Kinetic trail is the footage's warm orange/white
+  dashed pair. Verified live at AH-01 (flight, penetration, tumbling casing
+  settling on the seabed) and at AH-02 (two-shot expose, 58% -> 21%).
 - [ ] **P1-7 White damage outline.** When the truss takes damage a white
   wireframe traces the remaining/destroyed members (observed B ~55s,
   right side). Add an outline pass on recently damaged wall members.
@@ -329,6 +335,21 @@ Observed exact strings and layout (compare `src/ui/GameHud.ts`,
   21°/391 → 24 bodies; HE 23°/349 → 223 bodies; APHE 17°/433 cleared the
   core (3★, cover 0%). Heat stain visible but small vs recordings;
   fragment cubes small; no test-range stage yet (P1-1).
+
+## Physics session (2026-11-19)
+
+- Pass-through rounds now bore their own diameter through every crossed
+  layer (`boreWall()` in `wall-simulator.ts`), shedding cube chips and
+  publishing a `PENETRATION` damage event. They keep flying with their
+  flight frames; a wreck is only built for a terminal wall/ground impact,
+  so no pancake is left on an entry face. Verified live at AH-01: the APHE
+  opening shot crossed three layers, then the peeled casing tumbled and
+  settled on the seabed.
+- AH-02 revalidated after the chamber-cover change. Pinned two-shot proof
+  in `scripts/test-walls.ts`: `quake 31°/330` -> 38% cover, then
+  `petal 43°/290` -> 21% with the 110 HP core intact. Live run matched:
+  58% -> 38% -> 21%, 3 stars, 2/4 shots, Harbor Seal.
+- Wall coalescing fixed the multi-second shot stall on generated stages.
 
 - Watched both 11-18 recordings in full (1fps contact sheets + full-res
   impact frames in `.scratch/new-vid/`; A = `ScreenRecording_11-18-2026

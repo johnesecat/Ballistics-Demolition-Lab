@@ -7,6 +7,7 @@ import { snapshotCoreCoverFraction } from '../src/game/stages/generator';
 import { simulateShotWalls } from '../src/game/sim/wall-simulator';
 import { previewShot } from '../src/game/sim/preview';
 import { THICKNESS_CAP, crossLayer, makeProjectileBody } from '../src/game/sim/projectile-body';
+import { mergeWallRects } from '../src/game/stages/wall-builder';
 
 function assert(cond: boolean, msg: string): void { if (!cond) throw new Error(msg); }
 
@@ -33,6 +34,24 @@ assert(crossLayer(thick, 'wood', 6, 0.45) === null, 'plate above the wood cap mu
 assert(thick.squash === 1, 'a stopped round squashes against the plate');
 assert(THICKNESS_CAP.steel === 5 && THICKNESS_CAP.armor === 7, 'caps steel 5 / armor 7');
 console.log('layer span + cap: ok');
+
+// Wall coalescing must be an exact union: four touching cells become one wall
+// with the same area, while an air gap or a different material never merges.
+const cellRect = (x: number, y: number, material: 'brick' | 'steel' = 'brick') => ({
+  id: `c${x}-${y}`,
+  material,
+  polygons: [[{ x, y }, { x: x + 6, y }, { x: x + 6, y: y + 6 }, { x, y: y + 6 }]],
+});
+const cells = [cellRect(0, 0), cellRect(6, 0), cellRect(0, 6), cellRect(6, 6)];
+const mergedCells = mergeWallRects(cells);
+assert(mergedCells.length === 1, `touching cells must merge into one wall, got ${mergedCells.length}`);
+assert(Math.abs(wallsArea(mergedCells) - wallsArea(cells)) < 1e-6, 'merging must conserve area exactly');
+assert(mergedCells[0]!.id === 'w0', 'merged ids are deterministic');
+const gapCells = mergeWallRects([cellRect(0, 0), cellRect(9, 0)]);
+assert(gapCells.length === 2, 'an air gap must not merge');
+const mixedCells = mergeWallRects([cellRect(0, 0), cellRect(6, 0, 'steel')]);
+assert(mixedCells.length === 2, 'different materials must not merge');
+console.log(`wall coalescing: ${cells.length} cells -> ${mergedCells.length} wall, area conserved`);
 
 // traceWalls finds the structure
 const contact = traceWalls(state.walls, { x: 100, y: 200 }, { x: 1100, y: 200 }, 2);
@@ -89,6 +108,34 @@ assert(
   `expose stage must start shielded, got ${exposeCover}`,
 );
 console.log(`chambered core cover: ${exposeCover.toFixed(2)}`);
+
+// AH-02 stays clearable inside its 4-shot budget after the chamber-cover fix.
+// Pinned two-shot proof (not a search): quake opens the shell, petal strips it
+// below the 30% target while the 110 HP core survives.
+let exposeSnap = cloneSnapshot({
+  grid: exposeStage.grid,
+  wallState: exposeStage.wallState,
+  core: exposeStage.core,
+  relays: exposeStage.relays,
+});
+const exposeSolution = [
+  { angleDeg: 31, power: 330, mode: 'arc' as const, ammoId: 'quake' },
+  { angleDeg: 43, power: 290, mode: 'arc' as const, ammoId: 'petal' },
+];
+for (const input of exposeSolution) {
+  const shot = simulateShotWalls(exposeStage.def, exposeSnap, input);
+  exposeSnap = shot.result.final;
+  assert(!exposeSnap.core.destroyed && exposeSnap.core.hp > 0, 'expose shots must keep the core alive');
+}
+const exposedCover = snapshotCoreCoverFraction(exposeSnap);
+assert(
+  exposedCover <= (exposeStage.def.objective.threshold ?? 0.3),
+  `AH-02 must reach the expose threshold, got ${exposedCover.toFixed(3)}`,
+);
+assert(exposeSolution.length <= exposeStage.def.shots, 'solution must fit the authored shot budget');
+console.log(
+  `AH-02 expose: cover ${exposeCover.toFixed(2)} -> ${exposedCover.toFixed(2)} in ${exposeSolution.length}/${exposeStage.def.shots} shots, core ${exposeSnap.core.hp}`,
+);
 
 // Preview honesty: a shot stopped by the brick column must not claim a core
 // hit. The preview now carries a penetration body instead of tracing a

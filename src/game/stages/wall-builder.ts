@@ -241,11 +241,120 @@ export class WallBuilder {
       .filter((w) => w.polygons.length > 0);
   }
 
+  /**
+   * Coalesce touching axis-aligned rects of the same material into one wall.
+   * Cell-addressed fills emit one rect per cell; keeping those as separate
+   * walls made a bunker 833 wall objects, which is both physically wrong (a
+   * shell should bore one wall, not 40 tiles) and quadratic in the support
+   * solve. Must be called once the layout is finished, never mid-build.
+   */
+  mergeAdjacent(): void {
+    this.walls = mergeWallRects(this.walls);
+  }
+
   /** Wall count after merging co-linear adjacent rects of the same material. */
   merged(): Wall[] {
-    // Geometry is already overlap-free; merging is a render/perf nicety.
-    return this.walls;
+    return mergeWallRects(this.walls);
   }
+}
+
+/** Axis-aligned rectangle view of a polygon, or null for slopes/braces. */
+function rectOfPolygon(poly: Polygon): { x0: number; y0: number; x1: number; y1: number } | null {
+  if (poly.length !== 4) return null;
+  const xs = [...new Set(poly.map((p) => Math.round(p.x * 1000) / 1000))];
+  const ys = [...new Set(poly.map((p) => Math.round(p.y * 1000) / 1000))];
+  if (xs.length !== 2 || ys.length !== 2) return null;
+  // Every corner must be present exactly once; a diamond has 2x2 distinct
+  // coordinates too, so test the corner set rather than just the extents.
+  const present = new Set(poly.map((p) => `${Math.round(p.x * 1000) / 1000}|${Math.round(p.y * 1000) / 1000}`));
+  for (const x of xs) for (const y of ys) if (!present.has(`${x}|${y}`)) return null;
+  return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+}
+
+interface MergePiece {
+  x0: number; y0: number; x1: number; y1: number;
+  material: MaterialId;
+  anchored: boolean;
+  /** Slopes/braces keep their exact polygon and never merge. */
+  polygon?: Polygon;
+}
+
+/**
+ * Merge same-material rectangles that share a full edge. The union is exact
+ * (no overlap, no gap), and the surviving pieces are re-identified in a
+ * deterministic order so replay/save ids stay stable. Sloped polygons are
+ * passed through untouched.
+ */
+export function mergeWallRects(walls: Wall[]): Wall[] {
+  const pieces: MergePiece[] = [];
+  for (const wall of walls) {
+    for (const poly of wall.polygons) {
+      const rect = rectOfPolygon(poly);
+      if (rect) pieces.push({ ...rect, material: wall.material, anchored: wall.anchored === true });
+      else {
+        const b = polyBounds(poly);
+        pieces.push({
+          x0: b.minX, y0: b.minY, x1: b.maxX, y1: b.maxY,
+          material: wall.material, anchored: wall.anchored === true,
+          polygon: poly.map((p) => ({ ...p })),
+        });
+      }
+    }
+  }
+  const near = (a: number, b: number): boolean => Math.abs(a - b) < 1e-6;
+  let changed = true;
+  while (changed) {
+    changed = false;
+    outer: for (let i = 0; i < pieces.length; i += 1) {
+      const a = pieces[i]!;
+      if (a.polygon) continue;
+      for (let j = i + 1; j < pieces.length; j += 1) {
+        const b = pieces[j]!;
+        if (b.polygon || a.material !== b.material || a.anchored !== b.anchored) continue;
+        const sameY = near(a.y0, b.y0) && near(a.y1, b.y1);
+        if (sameY && (near(a.x1, b.x0) || near(b.x1, a.x0))) {
+          a.x0 = Math.min(a.x0, b.x0);
+          a.x1 = Math.max(a.x1, b.x1);
+          pieces.splice(j, 1);
+          changed = true;
+          break outer;
+        }
+        const sameX = near(a.x0, b.x0) && near(a.x1, b.x1);
+        if (sameX && (near(a.y1, b.y0) || near(b.y1, a.y0))) {
+          a.y0 = Math.min(a.y0, b.y0);
+          a.y1 = Math.max(a.y1, b.y1);
+          pieces.splice(j, 1);
+          changed = true;
+          break outer;
+        }
+      }
+    }
+  }
+  // Plain code-unit ordering keeps generated ids identical on every device;
+  // localeCompare can differ between locales and would break deterministic
+  // replays/saves for the same seed.
+  pieces.sort((a, b) => {
+    if (a.y0 !== b.y0) return a.y0 - b.y0;
+    if (a.x0 !== b.x0) return a.x0 - b.x0;
+    if (a.material !== b.material) return a.material < b.material ? -1 : 1;
+    return Number(a.anchored) - Number(b.anchored);
+  });
+  return pieces.map((piece, index) => {
+    const wall: Wall = {
+      id: `w${index}`,
+      material: piece.material,
+      polygons: piece.polygon
+        ? [piece.polygon]
+        : [[
+          { x: piece.x0, y: piece.y0 },
+          { x: piece.x1, y: piece.y0 },
+          { x: piece.x1, y: piece.y1 },
+          { x: piece.x0, y: piece.y1 },
+        ]],
+    };
+    if (piece.anchored) wall.anchored = true;
+    return wall;
+  });
 }
 
 function polyBounds(poly: Polygon): { minX: number; minY: number; maxX: number; maxY: number } {

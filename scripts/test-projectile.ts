@@ -43,6 +43,36 @@ const stopAgain = simulateShotWalls(built.def, snapshot, { angleDeg: 26, power: 
 assert.equal(stopAgain.result.wreck.length, stop.result.wreck.length, 'wreck is deterministic');
 console.log(`plate wreck: ${stop.result.wreck.length} frames, settled at ${Math.round(last.x)},${Math.round(last.y)}`);
 
+// A round that penetrates and keeps flying must not leave a pancake on the
+// entry face. It bores a real hole (with chips) and keeps producing frames
+// across the whole range.
+const pierce = simulateShotWalls(built.def, snapshot, { angleDeg: 6, power: 300, mode: 'straight', ammoId: 'apds-sabot' });
+assert(pierce.result.effects.some((event) => event.kind === 'penetrate'), 'fast dart must cross wall layers');
+assert.equal(pierce.result.wreck.length, 0, 'a pass-through round must not leave a wreck at its entry');
+const pierceLast = pierce.result.frames[pierce.result.frames.length - 1]!;
+assert(pierceLast.x > 1200, `the penetrating round must keep flying, last frame x=${pierceLast.x}`);
+const bores = pierce.result.damageEvents.filter((event) => event.label === 'PENETRATION');
+assert(bores.length > 0, 'penetration must record a bore event');
+assert(bores.every((event) => (event.spawnedBodies?.length ?? 0) > 0), 'each bore must shed cube chips');
+assert(bores.every((event) => event.wallState !== undefined), 'each bore must publish its post-penetration walls');
+console.log(`pass-through: ${bores.length} bores, ${pierce.bodies.length} chips, flight to x=${Math.round(pierceLast.x)}, no entry wreck`);
+
+// The opposite case: a round that crosses one layer but is finally stopped by
+// another wall gets its wreck at the stop, not at the first contact.
+const partial = simulateShotWalls(built.def, snapshot, { angleDeg: 26, power: 260, mode: 'arc', ammoId: 'aphe-hybrid' });
+assert(partial.result.effects.some((event) => event.kind === 'penetrate'), 'this shot must cross a layer before stopping');
+assert(partial.result.wreck.length > 30, 'a stopped round still gets its physical tail');
+assert(partial.result.impact && partial.result.firstContact, 'shot must report both contacts');
+const entry = partial.result.firstContact!;
+const stopAt = partial.result.impact!;
+assert(Math.hypot(stopAt.x - entry.x, stopAt.y - entry.y) > 20, 'the terminal impact must differ from the entry contact');
+const wreckStart = partial.result.wreck[0]!;
+assert(
+  Math.hypot(wreckStart.x - stopAt.x, wreckStart.y - stopAt.y) < 24,
+  `wreck must start at the terminal impact, got ${Math.round(wreckStart.x)},${Math.round(wreckStart.y)} vs ${Math.round(stopAt.x)},${Math.round(stopAt.y)}`,
+);
+console.log(`terminal wreck: entry @${Math.round(entry.x)},${Math.round(entry.y)} -> stop @${Math.round(stopAt.x)},${Math.round(stopAt.y)}`);
+
 // The same shell passes through a thin plate and keeps its flight; a core hit
 // consumes the casing, so it has no wreck.
 const direct = simulateShotWalls(built.def, snapshot, { angleDeg: 58, power: 280, mode: 'arc', ammoId: 'aphe-hybrid' });
