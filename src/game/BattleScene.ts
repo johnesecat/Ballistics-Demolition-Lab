@@ -68,6 +68,19 @@ interface Playback {
 
 const ZOOM_SPEEDS = [0.1, 0.4, 1] as const;
 
+/** Latest wreck frame at or before the replay time, or -1 before it starts. */
+function wreckIndex(frames: Array<{ t: number }>, elapsed: number): number {
+  if (frames.length === 0 || elapsed < frames[0]!.t) return -1;
+  let low = 0;
+  let high = frames.length - 1;
+  while (low < high) {
+    const mid = (low + high + 1) >> 1;
+    if (frames[mid]!.t <= elapsed) low = mid;
+    else high = mid - 1;
+  }
+  return low;
+}
+
 /**
  * Battlefield rendering and replay presentation. The simulation is finished
  * before a replay starts, so changing speed, pausing or skipping can never
@@ -1099,8 +1112,27 @@ export class BattleScene extends Phaser.Scene {
       scale += (next.scale - scale) * ratio;
     }
     const last = frames[frames.length - 1]!;
-    const afterImpact = playback.elapsed > last.t + 45;
-    if (afterImpact) {
+    if (playback.elapsed > last.t) {
+      // The casing does not freeze at the impact. It peels off, tumbles and
+      // settles along the deterministic wreck timeline produced by the solver.
+      const wreck = playback.result.wreck;
+      const index = wreckIndex(wreck, playback.elapsed);
+      if (index >= 0) {
+        const frame = wreck[index]!;
+        const ammo = this.getAmmo();
+        const body = makeProjectileBody(ammo.flight.mass ?? 1, 120);
+        body.squash = 1;
+        body.integrity = 0.3;
+        this.projectileView.draw(
+          frame.x,
+          frame.y,
+          frame.angle,
+          body,
+          34 * (ammo.flight.spriteScale ?? 1) * frame.scale,
+        );
+        this.projectile.setVisible(false);
+        return;
+      }
       this.projectile.setVisible(false);
       return;
     }
@@ -1126,6 +1158,9 @@ export class BattleScene extends Phaser.Scene {
   }
 
   private appendTrail(x: number, y: number): void {
+    if (this.playback && this.playback.elapsed > (this.playback.result.frames[this.playback.result.frames.length - 1]?.t ?? 0)) {
+      return;
+    }
     const points = (this.trailGraphics.getData('points') as Array<{ x: number; y: number }> | undefined) ?? [];
     const last = points[points.length - 1];
     if (!last || Math.hypot(last.x - x, last.y - y) > 1.8) points.push({ x, y });
@@ -1145,9 +1180,9 @@ export class BattleScene extends Phaser.Scene {
     g.clear();
     if (points.length < 2) return;
     const ammo = this.getAmmo();
-    // Kinetic rounds in the recordings always trail cyan/white, regardless of
-    // the round's casing colour.
-    const color = ammo.vfx.family === 'kinetic' || ammo.vfx.family === 'aphe' ? 0x9fe8f5 : ammo.vfx.trail;
+    // The newest recording's kinetic rounds trail warm orange/white dashes, not
+    // a solid ribbon; the alternating colours below keep that read.
+    const color = ammo.vfx.family === 'kinetic' || ammo.vfx.family === 'aphe' ? 0xffb066 : ammo.vfx.trail;
     const strength = ammo.vfx.trailLength;
     const offset = 2.4;
     for (let i = 1; i < points.length; i += 1) {

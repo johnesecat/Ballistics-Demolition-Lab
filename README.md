@@ -38,7 +38,7 @@ Keyboard: arrows adjust aim and power, A/D toggle firing mode, R resets aim, Spa
 ## Developer tools
 
 ```sh
-npm test                     # wall, fracture, heat-anchor, raster and save checks
+npm test                     # wall, fracture, heat-anchor, raster, collision, projectile and save checks
 npm run validate             # targeted search for a solution to each campaign stage
 python3 -m pip install Pillow
 npm run icons                # regenerate original icons, pixel sprites and contact sheet

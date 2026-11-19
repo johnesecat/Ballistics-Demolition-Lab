@@ -167,10 +167,16 @@ brick orange-brown, wood brown) with no per-cell texture.
   (1 impact flash, 1 jet, 1 shaped blast for HEAT — the duplicate
   simultaneous flash was already fixed in `simulator.ts`, keep that
   behaviour).
-- [ ] **P1-6 Projectile + trail.** Small grey shell body with a thin trail
-  (two faint parallel lines / smoke wisps behind it). In the recordings
-  the shell is small relative to the walls and the trail is visible from
-  muzzle to impact.
+- [x] **P1-6 Projectile + trail.** Rebuilt from the newest recording as a
+  whole-pixel dart: bulky grey-blue casing, swept upper fin, small belly
+  fin, stepped light nose, orange drive band with red flecks, cyan exhaust
+  and a yellow octagonal filler that opens as the casing crumples. Squash
+  deforms the cells in pixels (snapped to whole smaller-than-wall squares),
+  never a scaled sprite. The shell keeps its physics after contact: the
+  solver emits a deterministic wreck timeline (57 frames) so the casing
+  peels off, tumbles and settles on the seabed instead of freezing at the
+  wall. Kinetic trail is the footage's warm orange/white dashed pair.
+  Verified in a live close-up at AH-01 (flight, impact, falling wreck).
 - [ ] **P1-7 White damage outline.** When the truss takes damage a white
   wireframe traces the remaining/destroyed members (observed B ~55s,
   right side). Add an outline pass on recently damaged wall members.

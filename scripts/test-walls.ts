@@ -3,6 +3,7 @@ import { ALL_STAGES } from '../src/game/stages/campaign';
 import { cloneSnapshot } from '../src/game/stages/types';
 import { traceWalls, raySpanInWall } from '../src/game/sim/fracture';
 import { coreCoverFraction, detachUnsupported, wallsArea, wallsFromSnapshot } from '../src/game/sim/walls';
+import { snapshotCoreCoverFraction } from '../src/game/stages/generator';
 import { simulateShotWalls } from '../src/game/sim/wall-simulator';
 import { previewShot } from '../src/game/sim/preview';
 import { THICKNESS_CAP, crossLayer, makeProjectileBody } from '../src/game/sim/projectile-body';
@@ -71,6 +72,23 @@ console.log('support + anchoring: ok');
 const cover = coreCoverFraction(state, snapshot.core);
 assert(cover >= 0 && cover <= 1, 'cover fraction in range');
 console.log(`core cover fraction: ${cover.toFixed(2)}`);
+
+// A core housed in a chamber (AH-02 expose-core) must not read zero cover just
+// because its shell sits outside the immediate ring: that made the mission an
+// instant win at deploy. Cover must be measurable and above its clear target.
+const exposeStage = buildStage(ALL_STAGES[1]!);
+const exposeCover = snapshotCoreCoverFraction({
+  grid: exposeStage.grid,
+  wallState: exposeStage.wallState,
+  core: exposeStage.core,
+  relays: exposeStage.relays,
+});
+assert(exposeCover > 0.05, `chambered core cover must be measured, got ${exposeCover}`);
+assert(
+  exposeCover > (exposeStage.def.objective.threshold ?? 0.3),
+  `expose stage must start shielded, got ${exposeCover}`,
+);
+console.log(`chambered core cover: ${exposeCover.toFixed(2)}`);
 
 // Preview honesty: a shot stopped by the brick column must not claim a core
 // hit. The preview now carries a penetration body instead of tracing a

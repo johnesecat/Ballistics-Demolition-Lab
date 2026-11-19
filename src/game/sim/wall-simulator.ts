@@ -5,7 +5,7 @@ import { MATERIALS } from '../materials';
 import { Rng, hash32 } from '../rng';
 import type { StageDefinition, StageSnapshot } from '../stages/types';
 import { cloneSnapshot } from '../stages/types';
-import { launchVelocity, muzzlePosition } from './collision';
+import { launchVelocity, muzzlePosition, sweepCircleEntry } from './collision';
 import { fractureWall, penetrateWalls, raySpanInWall, spawnFragmentBodies, traceWalls, type FragmentBody, type Point, type WallContact } from './fracture';
 import type { DamageEvent, EffectEvent, ImpactInfo, ProjectileFrame, ShotInput, ShotResult } from './types';
 import { addHeat, cloneWallState, detachUnsupported, pointInPolygon, pointInWalls, wallsFromSnapshot, type WallState } from './walls';
@@ -99,6 +99,9 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
   let simTime = 0;
   let coreDamage = 0;
   let cellDamageArea = 0;
+  let ricochets = 0;
+  let impactVx = 0;
+  let impactVy = 0;
 
   const maxSteps = Math.min(PHYSICS.maxSimulationSteps, Math.ceil(PHYSICS.maxFlightSeconds / dt));
   for (let step = 0; step < maxSteps; step += 1) {
@@ -109,24 +112,64 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
     const nx = x + vx * dt;
     const ny = y + vy * dt;
     const contact = traceWalls(state.walls, { x, y }, { x: nx, y: ny }, ammo.flight.radius);
-    // core as circle check
     const core = snapshot.core;
-    const coreDist = Math.hypot(nx - core.x, ny - core.y);
-    const hitCore = coreDist <= core.radius + ammo.flight.radius;
-    if (contact || hitCore) {
-      const cx = contact ? contact.x : nx;
-      const cy = contact ? contact.y : ny;
-      const cnx = contact ? contact.nx : -vx / (Math.hypot(vx, vy) || 1);
-      const cny = contact ? contact.ny : -vy / (Math.hypot(vx, vy) || 1);
+    const invSpeed = 1 / (Math.hypot(vx, vy) || 1);
+    // Swept core entry. The old endpoint-only circle test could pass a fast
+    // round through the core, and a round stopped by a wall still damaged a
+    // core sitting behind that wall. Comparing entry parameters makes the
+    // nearest solid win, exactly like the wall sweep.
+    const coreT = core.destroyed
+      ? null
+      : sweepCircleEntry({ x, y }, { x: nx, y: ny }, core, ammo.flight.radius);
+    const wallT = contact ? contact.t : 1;
+    if (coreT !== null && coreT <= wallT) {
+      const hx = x + (nx - x) * coreT;
+      const hy = y + (ny - y) * coreT;
+      impactTime = simTime - dt * (1 - coreT);
+      impact = {
+        x: hx, y: hy, nx: -vx * invSpeed, ny: -vy * invSpeed,
+        kind: 'core', contactX: hx, contactY: hy,
+      };
+      firstContact = impact;
+      impactVx = vx;
+      impactVy = vy;
+      coreDamage += 40 * (ammo.ratings?.impact ?? 1);
+      effects.push({ t: impactTime * 1000, kind: 'core-hit', x: core.x, y: core.y, radius: core.radius });
+      break;
+    }
+    if (contact) {
+      const cx = contact.x;
+      const cy = contact.y;
+      const cnx = contact.nx;
+      const cny = contact.ny;
+      if (!firstContact) {
+        firstContact = { x: cx, y: cy, nx: cnx, ny: cny, kind: 'cell', material: contact.material, contactX: cx, contactY: cy, wallId: contact.wallId };
+      }
+      // Ricochet was preview-only: Bankshot showed a bounce and then stopped
+      // dead on the same input. Use the preview's incidence gate, damping and
+      // standoff so the dotted path and the live shot agree.
+      const speed = Math.hypot(vx, vy) || 1;
+      const incidence = Math.acos(Math.max(-1, Math.min(1, -(vx * cnx + vy * cny) / speed)));
+      if ((ammo.flight.ricochet ?? 0) > ricochets && ricochets < 2 && incidence > Math.PI * 0.31) {
+        ricochets += 1;
+        const dot = vx * cnx + vy * cny;
+        vx = (vx - 2 * dot * cnx) * 0.63;
+        vy = (vy - 2 * dot * cny) * 0.63;
+        x = cx + cnx * (ammo.flight.radius + 1.4);
+        y = cy + cny * (ammo.flight.radius + 1.4);
+        effects.push({ t: simTime * 1000, kind: 'bounce', x: cx, y: cy, angle: Math.atan2(cny, cnx), family: ammo.vfx.family, material: contact.material });
+        frames.push({ t: simTime * 1000, x, y, angle: Math.atan2(vy, vx), scale: 1, visible: true, squash: pBody.squash, layers: pBody.layers });
+        trajectory.push({ x, y, angle: Math.atan2(vy, vx) });
+        continue;
+      }
       impactTime = simTime;
       impact = {
         x: cx, y: cy, nx: cnx, ny: cny,
-        kind: contact ? 'cell' : 'core',
-        material: contact?.material,
-        contactX: cx, contactY: cy,
-        wallId: contact?.wallId,
+        kind: 'cell', material: contact.material,
+        contactX: cx, contactY: cy, wallId: contact.wallId,
       };
-      firstContact = impact;
+      impactVx = vx;
+      impactVy = vy;
       x = cx; y = cy;
       // --- Kinetic penetration (multi-layer) -------------------------------
       // A round is a physical body (mass + speed). It crosses real layers one
@@ -135,7 +178,7 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
       // round that still has speed continues to the next layer in the same
       // flight, so stacked plates, a timber frame and a thin steel face are
       // distinct outcomes rather than "stop on first touch".
-      let stopContact = contact;
+      let stopContact: WallContact | null = contact;
       let stoppedByLayer = false;
       if (contact) {
         pBody.speed = Math.hypot(vx, vy);
@@ -194,18 +237,24 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
           wallId: stopContact.wallId,
         };
         effects.push({ t: simTime * 1000, kind: 'impact', x: stopContact.x, y: stopContact.y, family: ammo.vfx.family, angle: Math.atan2(cny, cnx), material: stopContact.material });
-      } else if (!contact) {
-        effects.push({ t: simTime * 1000, kind: 'impact', x: cx, y: cy, family: ammo.vfx.family, angle: Math.atan2(cny, cnx), material: undefined });
-      }
-      if (hitCore) {
-        const dmg = 40 * (ammo.ratings?.impact ?? 1);
-        coreDamage += dmg;
-        effects.push({ t: simTime * 1000, kind: 'core-hit', x: core.x, y: core.y, radius: core.radius });
-        break;
       }
       if (stoppedByLayer) break;
       // Pass-through: keep flying from the exit point.
       continue;
+    }
+    // Ground contact. The live solver used to have none: a round that missed
+    // the battery flew through the seabed and resolved as a no-contact shot.
+    const floor = WORLD.groundY - ammo.flight.radius;
+    if (ny >= floor && y < floor) {
+      const t = Math.min(1, Math.max(0, (floor - y) / (ny - y || 1)));
+      const gx = x + (nx - x) * t;
+      impactTime = simTime - dt * (1 - t);
+      impact = { x: gx, y: floor, nx: 0, ny: -1, kind: 'ground', contactX: gx, contactY: floor };
+      impactVx = vx;
+      impactVy = vy;
+      if (!firstContact) firstContact = impact;
+      effects.push({ t: impactTime * 1000, kind: 'impact', x: gx, y: floor, family: ammo.vfx.family, angle: Math.PI / 2 });
+      break;
     }
     x = nx; y = ny;
     if (step % 3 === 0) {
@@ -219,7 +268,7 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
   const timedBodies: Array<FragmentBody & { spawnT: number }> = [];
   const bodiesBefore = bodies.length;
   void bodiesBefore;
-  if (impact && impact.kind === 'cell') {
+  if (impact && (impact.kind === 'cell' || impact.kind === 'ground')) {
     const incoming = norm(vx, vy);
     const origin: Point = { x: impact.x - impact.nx * 2, y: impact.y - impact.ny * 2 };
     const phaseQueue = phases.map(p => ({ phase: p, t: impactTime + ((p.at ?? 0) / 1000) })).sort((a, b) => a.t - b.t);
@@ -250,6 +299,12 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
   damageEvents.sort((a, b) => a.t - b.t);
   effects.sort((a, b) => a.t - b.t);
   phaseWallStates.sort((a, b) => a.t - b.t);
+  // The casing keeps its physics after contact. Flight frames stop at the
+  // impact, so a deterministic wreck timeline carries the peeled, tumbling
+  // shell through the rest of the replay instead of freezing it on the wall.
+  const wreck = impact && (impact.kind === 'cell' || impact.kind === 'ground')
+    ? buildWreckFrames(impact, impactVx, impactVy, ammo, impactTime * 1000)
+    : [];
 
   const core = { ...snapshot.core };
   core.hp = Math.max(0, core.hp - coreDamage);
@@ -285,7 +340,7 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
     final,
     phaseWallStates,
     bodies: timedBodies,
-    frames, effects, damageEvents,
+    frames, wreck, effects, damageEvents,
     firstContact, impact,
     coreDamage, coreDestroyed: core.destroyed,
     relaysDestroyed, cellDamage: cellDamageArea,
@@ -295,6 +350,54 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
     trajectory,
   };
   return { result, wallState: state, bodies };
+}
+
+function buildWreckFrames(
+  impact: ImpactInfo,
+  vx: number,
+  vy: number,
+  ammo: import('../ammo/types').AmmoDef,
+  startMs: number,
+): ProjectileFrame[] {
+  const nx = impact.nx;
+  const ny = impact.ny;
+  const speed = Math.hypot(vx, vy);
+  const into = vx * nx + vy * ny;
+  const metal = impact.material ? MATERIALS[impact.material].isMetal : false;
+  const restitution = impact.kind === 'ground' ? 0.16 : metal ? 0.22 : 0.12;
+  // Most of the round's energy was spent on the hit, so the casing peels off
+  // slowly and drops instead of rebounding like a ball.
+  let wx = (vx - (1 + restitution) * into * nx) * 0.22;
+  let wy = (vy - (1 + restitution) * into * ny) * 0.22;
+  const lift = Math.min(40, 8 + speed * 0.05);
+  wx += nx * lift;
+  wy += ny * lift;
+  let x = impact.x + nx * (ammo.flight.radius + 0.4);
+  let y = impact.y + ny * (ammo.flight.radius + 0.4);
+  // Start with the nose into the surface, so the squashed body spreads parallel
+  // to the wall and reads as a pancake instead of a diagonal splat.
+  let angle = Math.atan2(-ny, -nx);
+  const spin = (vx >= 0 ? 1 : -1) * (0.8 + Math.min(1.4, speed / 420));
+  const dt = 1 / 60;
+  const duration = 0.95;
+  const floor = WORLD.groundY - ammo.flight.radius;
+  const frames: ProjectileFrame[] = [];
+  for (let elapsed = 0; elapsed < duration; elapsed += dt) {
+    // Crumple in view: the casing opens over the first ~110 ms instead of
+    // snapping straight to a pancake.
+    const crumple = Math.min(1, 0.3 + (elapsed / 0.11) * 0.7);
+    frames.push({ t: startMs + elapsed * 1000, x, y, angle, scale: 0.92, visible: true, squash: crumple });
+    wy += PHYSICS.arcGravity * dt;
+    x += wx * dt;
+    y += wy * dt;
+    angle += spin * dt;
+    if (y >= floor) {
+      y = floor;
+      if (wy > 0) wy = -wy * 0.22;
+      wx *= 0.55;
+    }
+  }
+  return frames;
 }
 
 function applyPhase(

@@ -2,7 +2,7 @@ import { PHYSICS, WORLD } from '../config';
 import { getAmmo, getPhases } from '../ammo/catalogue';
 import type { AmmoDef } from '../ammo/types';
 import type { StageDefinition, StageSnapshot } from '../stages/types';
-import { launchVelocity, muzzlePosition } from './collision';
+import { launchVelocity, muzzlePosition, sweepCircleEntry } from './collision';
 import { raySpanInWall, traceWalls } from './fracture';
 import { MATERIALS } from '../materials';
 import { crossLayer, makeProjectileBody } from './projectile-body';
@@ -110,10 +110,19 @@ export function previewShot(def: StageDefinition, snapshot: StageSnapshot, input
     const traceSet = ignored.size === 0 ? state.walls : state.walls.filter((w) => !ignored.has(w.id));
     const contact = traceWalls(traceSet, { x, y }, { x: nx, y: ny }, ammo.flight.radius);
     const core = snapshot.core;
-    const coreHit = !core.destroyed && Math.hypot(nx - core.x, ny - core.y) <= core.radius + ammo.flight.radius;
-    // Ground contact.
+    const invSpeed = 1 / (Math.hypot(vx, vy) || 1);
+    // Swept core entry, ordered against the wall contact so the nearest solid
+    // wins. This mirrors the live solver instead of only testing the endpoint.
+    const coreT = core.destroyed
+      ? null
+      : sweepCircleEntry({ x, y }, { x: nx, y: ny }, core, ammo.flight.radius);
+    const wallT = contact ? contact.t : 1;
     let hit: ImpactInfo | null = null;
-    if (contact) {
+    if (coreT !== null && coreT <= wallT) {
+      const hx = x + (nx - x) * coreT;
+      const hy = y + (ny - y) * coreT;
+      hit = { x: hx, y: hy, nx: -vx * invSpeed, ny: -vy * invSpeed, kind: 'core', contactX: hx, contactY: hy };
+    } else if (contact) {
       hit = {
         x: contact.x,
         y: contact.y,
@@ -125,8 +134,6 @@ export function previewShot(def: StageDefinition, snapshot: StageSnapshot, input
         contactY: contact.y,
         wallId: contact.wallId,
       };
-    } else if (coreHit) {
-      hit = { x: nx, y: ny, nx: -vx / (Math.hypot(vx, vy) || 1), ny: -vy / (Math.hypot(vx, vy) || 1), kind: 'core', contactX: nx, contactY: ny };
     } else {
       const floor = WORLD.groundY - ammo.flight.radius;
       if (ny >= floor && y < floor) {

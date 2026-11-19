@@ -1,7 +1,7 @@
 import type { MaterialId } from '../materials';
 import type { StageSnapshot } from '../stages/types';
 import type { FractureFragment, Point, Polygon, Wall } from './fracture';
-import { polygonArea } from './fracture';
+import { polygonArea, traceWalls } from './fracture';
 
 /**
  * Grid-free wall world (P0). Walls are the authoritative damage geometry:
@@ -287,14 +287,39 @@ function pruneHeat(state: WallState): void {
   }
 }
 
-/** Core cover from wall geometry (P0-9): fraction of core perimeter blocked. */
+/** Depth of the chamber shell measured when the core's immediate ring is clear. */
+export const CORE_SHIELD_REACH = 64;
+
+/**
+ * Core cover from wall geometry (P0-9): fraction of core perimeter blocked.
+ *
+ * The ring test is kept because the campaign's expose thresholds are tuned to
+ * it. It reads zero for a core sitting in a chamber whose shell is more than
+ * six units off the core surface, which made AH-02 (an expose mission) report
+ * 0% at deploy and award a clear for any shot. In that case only, cast rays
+ * across the chamber instead: a real shell scores as cover and falls as it is
+ * demolished, while stages the ring already measured are untouched.
+ */
 export function coreCoverFraction(state: WallState, core: { x: number; y: number; radius: number }): number {
   const samples = 24;
-  let covered = 0;
+  let ringCovered = 0;
   for (let i = 0; i < samples; i += 1) {
     const a = (i / samples) * Math.PI * 2;
     const p = { x: core.x + Math.cos(a) * (core.radius + 6), y: core.y + Math.sin(a) * (core.radius + 6) };
-    if (pointInWalls(state.walls, p)) covered += 1;
+    if (pointInWalls(state.walls, p)) ringCovered += 1;
   }
-  return covered / samples;
+  if (ringCovered > 0) return ringCovered / samples;
+
+  let shellCovered = 0;
+  for (let i = 0; i < samples; i += 1) {
+    const a = (i / samples) * Math.PI * 2;
+    const hit = traceWalls(
+      state.walls,
+      { x: core.x, y: core.y },
+      { x: core.x + Math.cos(a) * CORE_SHIELD_REACH, y: core.y + Math.sin(a) * CORE_SHIELD_REACH },
+      0,
+    );
+    if (hit) shellCovered += 1;
+  }
+  return shellCovered / samples;
 }

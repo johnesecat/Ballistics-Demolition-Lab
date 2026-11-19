@@ -147,6 +147,12 @@ export interface ShotResult {
   /** All fragment bodies spawned by this shot, with spawn times for replay. */
   bodies: Array<FragmentBody & { spawnT: number }>;
   frames: ProjectileFrame[];
+  /**
+   * Deterministic post-impact shell motion. The casing never freezes on the
+   * wall: after the flight frames end it peels off under gravity, tumbles and
+   * settles. Presentation only; damage was already resolved.
+   */
+  wreck: ProjectileFrame[];
   effects: EffectEvent[];
   damageEvents: DamageEvent[];
   firstContact: ImpactInfo | null;
