@@ -1,0 +1,478 @@
+{
+  "source": "original geometry; reference-informed interpretation",
+  "count": 59,
+  "items": [
+    {
+      "id": "ap-solid-shot",
+      "name": "AP Solid Shot",
+      "category": "solid",
+      "iconPath": "public/assets/ammo/icons/ap-solid-shot.png",
+      "roundPath": "public/assets/ammo/rounds/ap-solid-shot.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "apc-capped",
+      "name": "APC Capped",
+      "category": "solid",
+      "iconPath": "public/assets/ammo/icons/apc-capped.png",
+      "roundPath": "public/assets/ammo/rounds/apc-capped.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "apbc-ballistic-cap",
+      "name": "APBC Ballistic Cap",
+      "category": "solid",
+      "iconPath": "public/assets/ammo/icons/apbc-ballistic-cap.png",
+      "roundPath": "public/assets/ammo/rounds/apbc-ballistic-cap.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "apcbc-combined-caps",
+      "name": "APCBC Combined Caps",
+      "category": "solid",
+      "iconPath": "public/assets/ammo/icons/apcbc-combined-caps.png",
+      "roundPath": "public/assets/ammo/rounds/apcbc-combined-caps.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "apcr-round",
+      "name": "APCR Round",
+      "category": "solid",
+      "iconPath": "public/assets/ammo/icons/apcr-round.png",
+      "roundPath": "public/assets/ammo/rounds/apcr-round.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "apds-sabot",
+      "name": "APDS Sabot",
+      "category": "solid",
+      "iconPath": "public/assets/ammo/icons/apds-sabot.png",
+      "roundPath": "public/assets/ammo/rounds/apds-sabot.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "finned-dart",
+      "name": "Finned Dart",
+      "category": "solid",
+      "iconPath": "public/assets/ammo/icons/finned-dart.png",
+      "roundPath": "public/assets/ammo/rounds/finned-dart.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "ap-breaker",
+      "name": "AP Breaker",
+      "category": "solid",
+      "iconPath": "public/assets/ammo/icons/ap-breaker.png",
+      "roundPath": "public/assets/ammo/rounds/ap-breaker.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "soft-nose",
+      "name": "Soft Nose",
+      "category": "soft",
+      "iconPath": "public/assets/ammo/icons/soft-nose.png",
+      "roundPath": "public/assets/ammo/rounds/soft-nose.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "pancake",
+      "name": "Pancake",
+      "category": "soft",
+      "iconPath": "public/assets/ammo/icons/pancake.png",
+      "roundPath": "public/assets/ammo/rounds/pancake.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "petal",
+      "name": "Petal",
+      "category": "soft",
+      "iconPath": "public/assets/ammo/icons/petal.png",
+      "roundPath": "public/assets/ammo/rounds/petal.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "bonded-mushroom",
+      "name": "Bonded Mushroom",
+      "category": "soft",
+      "iconPath": "public/assets/ammo/icons/bonded-mushroom.png",
+      "roundPath": "public/assets/ammo/rounds/bonded-mushroom.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "crusher",
+      "name": "Crusher",
+      "category": "soft",
+      "iconPath": "public/assets/ammo/icons/crusher.png",
+      "roundPath": "public/assets/ammo/rounds/crusher.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "heavy-soft-shot",
+      "name": "Heavy Soft Shot",
+      "category": "soft",
+      "iconPath": "public/assets/ammo/icons/heavy-soft-shot.png",
+      "roundPath": "public/assets/ammo/rounds/heavy-soft-shot.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "heat-round",
+      "name": "HEAT Round",
+      "category": "heat",
+      "iconPath": "public/assets/ammo/icons/heat-round.png",
+      "roundPath": "public/assets/ammo/rounds/heat-round.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "double-jet",
+      "name": "Double Jet",
+      "category": "heat",
+      "iconPath": "public/assets/ammo/icons/double-jet.png",
+      "roundPath": "public/assets/ammo/rounds/double-jet.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "wide-jet",
+      "name": "Wide Jet",
+      "category": "heat",
+      "iconPath": "public/assets/ammo/icons/wide-jet.png",
+      "roundPath": "public/assets/ammo/rounds/wide-jet.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "crossfire",
+      "name": "Crossfire",
+      "category": "heat",
+      "iconPath": "public/assets/ammo/icons/crossfire.png",
+      "roundPath": "public/assets/ammo/rounds/crossfire.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "sabot-heat",
+      "name": "Sabot HEAT",
+      "category": "heat",
+      "iconPath": "public/assets/ammo/icons/sabot-heat.png",
+      "roundPath": "public/assets/ammo/rounds/sabot-heat.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "hesh-round",
+      "name": "HESH Round",
+      "category": "hesh",
+      "iconPath": "public/assets/ammo/icons/hesh-round.png",
+      "roundPath": "public/assets/ammo/rounds/hesh-round.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "broadhead",
+      "name": "Broadhead",
+      "category": "hesh",
+      "iconPath": "public/assets/ammo/icons/broadhead.png",
+      "roundPath": "public/assets/ammo/rounds/broadhead.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "scab-lifter",
+      "name": "Scab Lifter",
+      "category": "hesh",
+      "iconPath": "public/assets/ammo/icons/scab-lifter.png",
+      "roundPath": "public/assets/ammo/rounds/scab-lifter.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "shock",
+      "name": "Shock",
+      "category": "hesh",
+      "iconPath": "public/assets/ammo/icons/shock.png",
+      "roundPath": "public/assets/ammo/rounds/shock.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "hesh-demolition",
+      "name": "HESH Demolition",
+      "category": "hesh",
+      "iconPath": "public/assets/ammo/icons/hesh-demolition.png",
+      "roundPath": "public/assets/ammo/rounds/hesh-demolition.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "he-blast",
+      "name": "HE Blast",
+      "category": "he",
+      "iconPath": "public/assets/ammo/icons/he-blast.png",
+      "roundPath": "public/assets/ammo/rounds/he-blast.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "he-demolition",
+      "name": "HE Demolition",
+      "category": "he",
+      "iconPath": "public/assets/ammo/icons/he-demolition.png",
+      "roundPath": "public/assets/ammo/rounds/he-demolition.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "fragmentation",
+      "name": "Fragmentation",
+      "category": "he",
+      "iconPath": "public/assets/ammo/icons/fragmentation.png",
+      "roundPath": "public/assets/ammo/rounds/fragmentation.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "thermal",
+      "name": "Thermal",
+      "category": "he",
+      "iconPath": "public/assets/ammo/icons/thermal.png",
+      "roundPath": "public/assets/ammo/rounds/thermal.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "aphe-hybrid",
+      "name": "APHE Hybrid",
+      "category": "aphe",
+      "iconPath": "public/assets/ammo/icons/aphe-hybrid.png",
+      "roundPath": "public/assets/ammo/rounds/aphe-hybrid.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "capped-aphe",
+      "name": "Capped APHE",
+      "category": "aphe",
+      "iconPath": "public/assets/ammo/icons/capped-aphe.png",
+      "roundPath": "public/assets/ammo/rounds/capped-aphe.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "bunkerbreaker",
+      "name": "Bunkerbreaker",
+      "category": "aphe",
+      "iconPath": "public/assets/ammo/icons/bunkerbreaker.png",
+      "roundPath": "public/assets/ammo/rounds/bunkerbreaker.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "pele-sidewinder",
+      "name": "PELE Sidewinder",
+      "category": "solid",
+      "iconPath": "public/assets/ammo/icons/pele-sidewinder.png",
+      "roundPath": "public/assets/ammo/rounds/pele-sidewinder.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "wedge",
+      "name": "Wedge",
+      "category": "solid",
+      "iconPath": "public/assets/ammo/icons/wedge.png",
+      "roundPath": "public/assets/ammo/rounds/wedge.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "bankshot",
+      "name": "Bankshot",
+      "category": "solid",
+      "iconPath": "public/assets/ammo/icons/bankshot.png",
+      "roundPath": "public/assets/ammo/rounds/bankshot.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "cuff",
+      "name": "Cuff",
+      "category": "soft",
+      "iconPath": "public/assets/ammo/icons/cuff.png",
+      "roundPath": "public/assets/ammo/rounds/cuff.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "double-strike",
+      "name": "Double Strike",
+      "category": "heat",
+      "iconPath": "public/assets/ammo/icons/double-strike.png",
+      "roundPath": "public/assets/ammo/rounds/double-strike.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "cornerjet",
+      "name": "Cornerjet",
+      "category": "heat",
+      "iconPath": "public/assets/ammo/icons/cornerjet.png",
+      "roundPath": "public/assets/ammo/rounds/cornerjet.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "forkjet",
+      "name": "Forkjet",
+      "category": "heat",
+      "iconPath": "public/assets/ammo/icons/forkjet.png",
+      "roundPath": "public/assets/ammo/rounds/forkjet.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "roofbreaker",
+      "name": "Roofbreaker",
+      "category": "heat",
+      "iconPath": "public/assets/ammo/icons/roofbreaker.png",
+      "roundPath": "public/assets/ammo/rounds/roofbreaker.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "ribbon-hesh",
+      "name": "Ribbon HESH",
+      "category": "hesh",
+      "iconPath": "public/assets/ammo/icons/ribbon-hesh.png",
+      "roundPath": "public/assets/ammo/rounds/ribbon-hesh.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "echo-hesh",
+      "name": "Echo HESH",
+      "category": "hesh",
+      "iconPath": "public/assets/ammo/icons/echo-hesh.png",
+      "roundPath": "public/assets/ammo/rounds/echo-hesh.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "rainmaker",
+      "name": "Rainmaker",
+      "category": "he",
+      "iconPath": "public/assets/ammo/icons/rainmaker.png",
+      "roundPath": "public/assets/ammo/rounds/rainmaker.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "crownburst",
+      "name": "Crownburst",
+      "category": "he",
+      "iconPath": "public/assets/ammo/icons/crownburst.png",
+      "roundPath": "public/assets/ammo/rounds/crownburst.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "obstacle-reducer",
+      "name": "Obstacle Reducer",
+      "category": "he",
+      "iconPath": "public/assets/ammo/icons/obstacle-reducer.png",
+      "roundPath": "public/assets/ammo/rounds/obstacle-reducer.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "foundation-breaker",
+      "name": "Foundation Breaker",
+      "category": "he",
+      "iconPath": "public/assets/ammo/icons/foundation-breaker.png",
+      "roundPath": "public/assets/ammo/rounds/foundation-breaker.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "pressure-hammer",
+      "name": "Pressure Hammer",
+      "category": "he",
+      "iconPath": "public/assets/ammo/icons/pressure-hammer.png",
+      "roundPath": "public/assets/ammo/rounds/pressure-hammer.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "emberpiercer",
+      "name": "Emberpiercer",
+      "category": "aphe",
+      "iconPath": "public/assets/ammo/icons/emberpiercer.png",
+      "roundPath": "public/assets/ammo/rounds/emberpiercer.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "switchfuse",
+      "name": "Switchfuse",
+      "category": "aphe",
+      "iconPath": "public/assets/ammo/icons/switchfuse.png",
+      "roundPath": "public/assets/ammo/rounds/switchfuse.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "sideburst",
+      "name": "Sideburst",
+      "category": "aphe",
+      "iconPath": "public/assets/ammo/icons/sideburst.png",
+      "roundPath": "public/assets/ammo/rounds/sideburst.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "latchburst",
+      "name": "Latchburst",
+      "category": "aphe",
+      "iconPath": "public/assets/ammo/icons/latchburst.png",
+      "roundPath": "public/assets/ammo/rounds/latchburst.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "adaptive-shell",
+      "name": "Adaptive Shell",
+      "category": "aphe",
+      "iconPath": "public/assets/ammo/icons/adaptive-shell.png",
+      "roundPath": "public/assets/ammo/rounds/adaptive-shell.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "drillhead",
+      "name": "Drillhead",
+      "category": "solid",
+      "iconPath": "public/assets/ammo/icons/drillhead.png",
+      "roundPath": "public/assets/ammo/rounds/drillhead.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "splitter",
+      "name": "Splitter",
+      "category": "soft",
+      "iconPath": "public/assets/ammo/icons/splitter.png",
+      "roundPath": "public/assets/ammo/rounds/splitter.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "needle-jet",
+      "name": "Needle Jet",
+      "category": "heat",
+      "iconPath": "public/assets/ammo/icons/needle-jet.png",
+      "roundPath": "public/assets/ammo/rounds/needle-jet.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "quake",
+      "name": "Quake",
+      "category": "hesh",
+      "iconPath": "public/assets/ammo/icons/quake.png",
+      "roundPath": "public/assets/ammo/rounds/quake.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "popcorn-burst",
+      "name": "Popcorn Burst",
+      "category": "he",
+      "iconPath": "public/assets/ammo/icons/popcorn-burst.png",
+      "roundPath": "public/assets/ammo/rounds/popcorn-burst.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "meltdown",
+      "name": "Meltdown",
+      "category": "he",
+      "iconPath": "public/assets/ammo/icons/meltdown.png",
+      "roundPath": "public/assets/ammo/rounds/meltdown.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "chain-blast",
+      "name": "Chain Blast",
+      "category": "aphe",
+      "iconPath": "public/assets/ammo/icons/chain-blast.png",
+      "roundPath": "public/assets/ammo/rounds/chain-blast.png",
+      "artwork": "original interpretation informed by supplied references"
+    },
+    {
+      "id": "anvil",
+      "name": "Anvil",
+      "category": "soft",
+      "iconPath": "public/assets/ammo/icons/anvil.png",
+      "roundPath": "public/assets/ammo/rounds/anvil.png",
+      "artwork": "original interpretation informed by supplied references"
+    }
+  ]
+}

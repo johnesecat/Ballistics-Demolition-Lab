@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <meta name="theme-color" content="#071018" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="description" content="BREAKWATER — an original side-view artillery and destruction puzzle. 59 rounds, 15 generated batteries, local progress." />
+    <title>BREAKWATER — Demolition Range</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23071018'/%3E%3Cpath d='M6 23h20v3H6z' fill='%23ef7c2d'/%3E%3Cpath d='M8 21V11h4v10zm6 0V7h4v14zm6 0v-7h4v7z' fill='%23384b5a'/%3E%3Ccircle cx='16' cy='14' r='3' fill='%23ed4f6a'/%3E%3C/svg%3E"
+    />
+  </head>
+  <body>
+    <div id="app">
+      <div id="game-layer" aria-hidden="true"></div>
+      <div class="atmosphere" aria-hidden="true"></div>
+      <section id="screen-layer" class="screen-layer"></section>
+      <div id="hud-layer" class="hud-layer"></div>
+      <div id="overlay-layer" class="overlay-layer" hidden></div>
+      <div id="toast-layer" class="toast-layer" role="status" aria-live="polite"></div>
+      <noscript>
+        <div class="noscript-card">
+          <h1>JAVASCRIPT REQUIRED</h1>
+          <p>Breakwater runs entirely in your browser. Enable JavaScript to deploy.</p>
+        </div>
+      </noscript>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
