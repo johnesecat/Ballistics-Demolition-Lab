@@ -336,6 +336,22 @@ Observed exact strings and layout (compare `src/ui/GameHud.ts`,
   core (3★, cover 0%). Heat stain visible but small vs recordings;
   fragment cubes small; no test-range stage yet (P1-1).
 
+## Physics and camera follow-up (2026-11-23)
+
+- Wall-state deserialization merges legacy rectangular cells without bridging
+  gaps or rounding away damaged geometry, while preserving anchors and heat.
+  Campaign saves currently contain progress/settings only; in-progress mission
+  resume is not implemented, so this migration is not yet wired to a resume UI.
+- All 15 campaign seeds have a deterministic generation smoke check; AH-01's
+  separate anchored test-range parts retain their authored identities. AH-02's
+  pinned two-shot expose proof still passes.
+- Pass-through shells no longer trigger terminal phases at their last entry;
+  blasts can fracture the middle of a large wall even when its vertices are
+  distant. Brick debris uses finer pieces than metal for blast impacts.
+- The replay camera now transitions wide → projectile follow → impact → wide
+  using replay time; visual alignment against the videos is still unverified.
+  Steel bending, per-material deformation and large chunks remain open.
+
 ## Physics session (2026-11-19)
 
 - Pass-through rounds now bore their own diameter through every crossed

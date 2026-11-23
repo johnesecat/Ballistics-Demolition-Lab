@@ -98,6 +98,27 @@ const heat = simulateShotWalls(
 assert.ok(heat.firstContact && heat.effects.some((event) => event.kind === 'jet'), 'the HEAT shot hits and produces a jet');
 const simultaneousImpacts = heat.effects.filter((event) => event.kind === 'impact' && event.t === heat.effects.find((e) => e.kind === 'impact')?.t);
 assert.equal(simultaneousImpacts.length, 1, 'HEAT contact is shown once at initial impact');
+// A blast on the middle of a large plate must not miss simply because all of
+// the polygon's corners are far away. Brick should produce a finer cube spray
+// than steel for the same impact footprint.
+function largeWallShot(material: Wall['material']) {
+  const target: Wall = { id: 'large', material, anchored: true, polygons: [[
+    { x: 500, y: -1000 }, { x: 1000, y: -1000 }, { x: 1000, y: 1000 }, { x: 500, y: 1000 },
+  ]] };
+  return simulateShotWalls(stage.def, {
+    grid: stage.grid,
+    wallState: { walls: [target], heat: [], groundY: 346, version: 1 },
+    core: { ...stage.core, x: 1100, y: -1000 },
+    relays: [],
+  }, { angleDeg: 4, power: 300, mode: 'straight', ammoId: 'he-blast' });
+}
+const brickBlast = largeWallShot('brick');
+const steelBlast = largeWallShot('steel');
+const brickDebris = brickBlast.result.damageEvents.find((event) => event.label === 'HE BLAST')?.spawnedBodies ?? [];
+const steelDebris = steelBlast.result.damageEvents.find((event) => event.label === 'HE BLAST')?.spawnedBodies ?? [];
+assert.ok(brickDebris.length > 0, 'blast must fracture the centre of a large wall');
+assert.ok(steelDebris.length > 0, 'blast must fracture a large steel wall');
+assert.ok(brickDebris.length > steelDebris.length, 'brick crumbles more finely than steel at the same impact');
 console.log('Impact-local fracture, swept contact, layered penetration and HEAT event checks passed');
 
 import { heatColor, spawnFragmentBodies, stepFragmentBodies, type FragmentBody } from '../src/game/sim/fracture';

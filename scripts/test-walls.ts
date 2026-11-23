@@ -4,7 +4,7 @@ import { cloneSnapshot } from '../src/game/stages/types';
 import { traceWalls, raySpanInWall } from '../src/game/sim/fracture';
 import { coreCoverFraction, detachUnsupported, wallsArea, wallsFromSnapshot } from '../src/game/sim/walls';
 import { snapshotCoreCoverFraction } from '../src/game/stages/generator';
-import { simulateShotWalls } from '../src/game/sim/wall-simulator';
+import { deserializeWallState, simulateShotWalls } from '../src/game/sim/wall-simulator';
 import { previewShot } from '../src/game/sim/preview';
 import { THICKNESS_CAP, crossLayer, makeProjectileBody } from '../src/game/sim/projectile-body';
 import { mergeWallRects } from '../src/game/stages/wall-builder';
@@ -51,7 +51,47 @@ const gapCells = mergeWallRects([cellRect(0, 0), cellRect(9, 0)]);
 assert(gapCells.length === 2, 'an air gap must not merge');
 const mixedCells = mergeWallRects([cellRect(0, 0), cellRect(6, 0, 'steel')]);
 assert(mixedCells.length === 2, 'different materials must not merge');
+const tinyGap = mergeWallRects([cellRect(0, 0), cellRect(6.0000001, 0)]);
+assert(tinyGap.length === 2, 'even a subpixel gap must not be filled by migration');
+assert(tinyGap[1]!.polygons[0]![0]!.x === 6.0000001, 'migration must preserve exact coordinates');
 console.log(`wall coalescing: ${cells.length} cells -> ${mergedCells.length} wall, area conserved`);
+
+// Legacy snapshots must preserve actual holes, material boundaries, anchoring
+// and heat while coalescing their old one-wall-per-cell geometry.
+const legacyWalls = [
+  ...cells,
+  cellRect(18, 0),
+  { ...cellRect(24, 0), anchored: true },
+  cellRect(30, 0, 'steel'),
+];
+const savedHeat = [{ x: 3, y: 3, heat: 0.7, radius: 10, material: 'brick' }];
+const loaded = deserializeWallState(JSON.stringify({ walls: legacyWalls, heat: savedHeat, groundY: 346, version: 1 }));
+assert(loaded.walls.length === 4, `legacy cells should merge without bridging gaps or anchors, got ${loaded.walls.length}`);
+assert(wallsArea(loaded.walls) === 252, 'migration must preserve the existing damaged geometry');
+assert(JSON.stringify(loaded.heat) === JSON.stringify(savedHeat), 'migration must preserve saved heat');
+assert(loaded.walls.some((w) => w.anchored), 'migration must preserve anchoring');
+assert(traceWalls(loaded.walls, { x: 15, y: -5 }, { x: 15, y: 15 }) === null, 'migration must keep the breach open');
+assert(JSON.stringify(deserializeWallState(JSON.stringify(loaded))) === JSON.stringify(loaded), 'loading migrated geometry must be stable');
+console.log('legacy wall-state migration: ok');
+
+// A smoke check for every authored campaign seed, independent of solution search.
+assert(ALL_STAGES.length === 15, `expected 15 campaign stages, got ${ALL_STAGES.length}`);
+for (const def of ALL_STAGES) {
+  const built = buildStage(def);
+  const walls = built.wallState.walls;
+  assert(walls.length > 0, `${def.code}: expected wall geometry`);
+  assert(built.diagnostics.warnings.length === 0, `${def.code}: generation warnings: ${built.diagnostics.warnings.join(', ')}`);
+  assert(detachUnsupported(walls, built.wallState.groundY).detached.length === 0, `${def.code}: unsupported walls`);
+  assert(new Set(walls.map((wall) => wall.id)).size === walls.length, `${def.code}: wall IDs must be unique`);
+  assert(walls.every((wall) => wall.polygons.length > 0 && wall.polygons.every((poly) => poly.length >= 3 && poly.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y)))), `${def.code}: invalid wall geometry`);
+  assert(wallsArea(walls) > 0, `${def.code}: expected nonzero wall area`);
+  assert(Number.isFinite(built.core.x) && Number.isFinite(built.core.y) && built.core.hp > 0, `${def.code}: invalid core`);
+  assert(JSON.stringify(walls) === JSON.stringify(buildStage(def).wallState.walls), `${def.code}: generation must be deterministic`);
+  // AH-01 is a deliberately authored range of separate anchored parts, not
+  // a cell-generated bunker; preserve those part identities.
+  if (def.code !== 'AH-01') assert(mergeWallRects(walls).length === walls.length, `${def.code}: stage walls must already be merged`);
+  console.log(`${def.code}: ${walls.length} walls, generated cleanly`);
+}
 
 // traceWalls finds the structure
 const contact = traceWalls(state.walls, { x: 100, y: 200 }, { x: 1100, y: 200 }, 2);

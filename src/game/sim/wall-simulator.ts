@@ -5,6 +5,7 @@ import { MATERIALS } from '../materials';
 import { Rng, hash32 } from '../rng';
 import type { StageDefinition, StageSnapshot } from '../stages/types';
 import { cloneSnapshot } from '../stages/types';
+import { mergeWallRects } from '../stages/wall-builder';
 import { launchVelocity, muzzlePosition, sweepCircleEntry } from './collision';
 import { fractureWall, fractureWallBand, penetrateWalls, raySpanInWall, spawnFragmentBodies, traceWalls, type FractureFragment, type FragmentBody, type Point, type WallContact } from './fracture';
 import type { DamageEvent, EffectEvent, ImpactInfo, ProjectileFrame, ShotInput, ShotResult } from './types';
@@ -71,6 +72,7 @@ export function deserializeWallState(json: string): WallState {
       .map((r) => ({ x: r.x, y: r.y, heat: Math.min(1, r.heat), radius: r.radius ?? 20 + r.heat * 34 }));
   }
   if (!Array.isArray(parsed.heat)) parsed.heat = [];
+  parsed.walls = mergeWallRects(parsed.walls);
   return cloneWallState(parsed);
 }
 
@@ -258,7 +260,9 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
         effects.push({ t: simTime * 1000, kind: 'impact', x: stopContact.x, y: stopContact.y, family: ammo.vfx.family, angle: Math.atan2(cny, cnx), material: stopContact.material });
       }
       if (stoppedByLayer) break;
-      // Pass-through: keep flying from the exit point.
+      // No terminal impact occurred: retain the bore, but don't detonate at
+      // this entry if the round later leaves the range without stopping.
+      impact = null;
       continue;
     }
     // Ground contact. The live solver used to have none: a round that missed
@@ -346,7 +350,8 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
     if (!finalAlive && r.alive) { relaysDestroyed.push(r.id); messages.push('RELAY DESTROYED'); }
     return { ...r, alive: finalAlive };
   });
-  const durationMs = Math.min(12000, Math.max(1400, impactTime * 1000 + 1200));
+  const flightEndMs = frames[frames.length - 1]?.t ?? 0;
+  const durationMs = Math.min(12000, Math.max(1400, flightEndMs + 1200, impactTime * 1000 + 1200));
   // Grid field is synced ONLY for the legacy raster renderer; authority is
   // wallState. New code must use snapshot.wallState, never snapshot.grid cells.
   const final = attachWallState(cloneSnapshot(snapshot), state);
@@ -491,8 +496,13 @@ function applyPhase(
     // fracture each wall near origin
     const newBodies: FragmentBody[] = [];
     state.walls = state.walls.map((w) => {
-      // only walls within radius+40
-      const near = w.polygons.some(p => p.some(pt => Math.hypot(pt.x - origin.x, pt.y - origin.y) < radius + 60));
+      // A large wall can intersect the blast with every vertex far away.
+      const near = w.polygons.some((polygon) => {
+        const xs = polygon.map((point) => point.x);
+        const ys = polygon.map((point) => point.y);
+        return Math.min(...xs) <= origin.x + radius && Math.max(...xs) >= origin.x - radius &&
+          Math.min(...ys) <= origin.y + radius && Math.max(...ys) >= origin.y - radius;
+      });
       if (!near) return w;
       // `dmg` is a damage score (often 20-40), not a 0..1 fraction. The old
       // `0.7 + dmg * 0.05` turned a 43-radius APHE burst into a 107-radius
@@ -500,7 +510,12 @@ function applyPhase(
       // damage contribution and carve relative to the authored blast radius.
       const dmgFactor = Math.max(0, Math.min(0.3, dmg / 120));
       const fracRadius = Math.min(radius * 0.95, baseRadius * (0.68 + dmgFactor));
-      const r = fractureWall(w, origin, fracRadius, FRAGMENT_SIZE);
+      // Brittle brick produces a finer spray than ductile metal. Geometry is
+      // still carved in world units, regardless of the presentation zoom.
+      let fragmentSize = FRAGMENT_SIZE;
+      if (w.material === 'brick') fragmentSize = 6;
+      else if (MATERIALS[w.material].isMetal) fragmentSize = 8;
+      const r = fractureWall(w, origin, fracRadius, fragmentSize);
       const fragBodies = spawnFragmentBodies(r.fragments, origin, { x: -impact.nx * 90, y: -60 }, seedFrom(tMs, rng), 0.7);
       newBodies.push(...fragBodies);
       // Heat only where metal survived the break, and white-hot at the face

@@ -4,6 +4,7 @@ import { buildStage } from '../src/game/stages/generator';
 import { ALL_STAGES } from '../src/game/stages/campaign';
 import { cloneSnapshot } from '../src/game/stages/types';
 import { simulateShotWalls } from '../src/game/sim/wall-simulator';
+import { shotCameraFrame } from '../src/game/config';
 
 /**
  * Projectile body checks: the reference silhouette is built from whole square
@@ -56,6 +57,9 @@ assert(bores.length > 0, 'penetration must record a bore event');
 assert(bores.every((event) => (event.spawnedBodies?.length ?? 0) > 0), 'each bore must shed cube chips');
 assert(bores.every((event) => event.wallState !== undefined), 'each bore must publish its post-penetration walls');
 console.log(`pass-through: ${bores.length} bores, ${pierce.bodies.length} chips, flight to x=${Math.round(pierceLast.x)}, no entry wreck`);
+assert.equal(pierce.result.impact, null, 'a shell that flies out of bounds must not retain the entry as its terminal impact');
+assert.equal(pierce.result.damageEvents.some((event) => event.label === 'SABOT CORE'), false, 'a pass-through must not trigger the terminal phase at its entry');
+assert.equal(pierce.result.damageEvents.some((event) => event.label === 'PENETRATION'), true, 'the physical bore still remains');
 
 // The opposite case: a round that crosses one layer but is finally stopped by
 // another wall gets its wreck at the stop, not at the first contact.
@@ -83,3 +87,20 @@ const ground = simulateShotWalls(built.def, snapshot, { angleDeg: 4, power: 40, 
 assert.equal(ground.result.impact?.kind, 'ground', 'low shot lands on the seabed');
 assert(ground.result.wreck.length > 30, 'grounded shell still tumbles');
 console.log('projectile wreck physics: ok');
+
+// Camera framing must start wide, track the shell, hold briefly on impact, then
+// return to the original view before playback finishes; pauses use replay time.
+const wide = shotCameraFrame(0, 1400, 2600, 0.8, 1.8);
+const following = shotCameraFrame(700, 1400, 2600, 0.8, 1.8);
+const impactView = shotCameraFrame(1500, 1400, 2600, 0.8, 1.8);
+const returned = shotCameraFrame(2600, 1400, 2600, 0.8, 1.8);
+assert.equal(wide.tracking, 0);
+assert.equal(wide.zoom, 0.8);
+assert.equal(following.tracking, 1);
+assert(following.zoom > wide.zoom, 'flight closes in on the shell');
+assert.equal(impactView.tracking, 1);
+assert(impactView.zoom >= following.zoom, 'impact remains in close-up');
+assert.equal(returned.tracking, 0);
+assert.equal(returned.zoom, 0.8);
+assert.deepEqual(shotCameraFrame(700, 1400, 2600, 0.8, 1.8), following, 'camera framing is replay-time deterministic');
+console.log('shot camera framing: ok');

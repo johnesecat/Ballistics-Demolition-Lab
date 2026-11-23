@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { AIM, CAMERA, CANNON, EFFECT_LIMITS, POWER, WORLD } from './config';
+import { AIM, CAMERA, CANNON, EFFECT_LIMITS, POWER, WORLD, shotCameraFrame } from './config';
 import { AMMO, getAmmo } from './ammo/catalogue';
 import type { AmmoDef } from './ammo/types';
 import type { Settings } from './save';
@@ -152,6 +152,9 @@ export class BattleScene extends Phaser.Scene {
     focusX: 600,
     focusY: 240,
     zoom: 1,
+    wideX: 600,
+    wideY: 240,
+    wideZoom: 1,
     slow: 1,
   };
 
@@ -329,15 +332,18 @@ export class BattleScene extends Phaser.Scene {
 
   private beginCine(result: ShotResult): void {
     const last = result.frames[result.frames.length - 1];
-    const impact = result.impact ?? result.firstContact;
+    const impact = result.impact;
     this.cine = {
       active: true,
       impactT: last ? last.t : 0,
-      impactX: impact?.x ?? WORLD.width * 0.7,
-      impactY: impact?.y ?? WORLD.height * 0.5,
+      impactX: impact?.x ?? last?.x ?? CANNON.x,
+      impactY: impact?.y ?? last?.y ?? CANNON.y,
       focusX: CANNON.x,
       focusY: CANNON.y,
       zoom: this.cameras.main.zoom,
+      wideX: this.cameras.main.midPoint.x,
+      wideY: this.cameras.main.midPoint.y,
+      wideZoom: this.cameras.main.zoom,
       slow: 1,
     };
     // Keep the whole range baked as one until the round is nearly at its wall;
@@ -351,7 +357,7 @@ export class BattleScene extends Phaser.Scene {
    * changes how fast the pre-computed replay is presented.
    */
   private cinematicTimeScale(playback: Playback): number {
-    if (!this.cine.active) return 1;
+    if (!this.cine.active || !playback.result.impact) return 1;
     const togo = this.cine.impactT - playback.elapsed;
     // The footage eases into a brief 2.5–4x slow-motion at contact, not a
     // 10x freeze: the old 0.1x hold stretched a 150 ms beat over 1.5 s and made
@@ -372,38 +378,24 @@ export class BattleScene extends Phaser.Scene {
     const playback = this.playback;
     const cam = this.cameras.main;
     const t = playback.elapsed;
-    const close = this.closeZoom();
-    let targetZoom = close;
+    const framing = shotCameraFrame(t, this.cine.impactT, playback.result.durationMs, this.cine.wideZoom, this.closeZoom());
     let tx = this.cine.impactX;
     let ty = this.cine.impactY;
-    if (t < this.cine.impactT - 20 && playback.result.frames.length > 0) {
+    if (t < this.cine.impactT && playback.result.frames.length > 0) {
       const angle = this.lastProjectile.angle;
-      // Follow the round: the reference keeps the projectile near frame centre
-      // through the whole arc, so its x-ray body is readable in flight.
-      tx = this.lastProjectile.x + Math.cos(angle) * 30;
-      ty = this.lastProjectile.y + Math.sin(angle) * 30;
-      targetZoom = close * 1.12;
-    } else {
-      const since = Math.max(0, t - this.cine.impactT);
-      const bounds = this.structure.occupiedBounds();
-      if (bounds) {
-        tx = tx * 0.7 + (bounds.x + bounds.width / 2) * 0.3;
-        ty = ty * 0.7 + (bounds.y + bounds.height * 0.55) * 0.3;
-      }
-      if (since < 420) {
-        targetZoom = close * 1.1;
-      } else {
-        const fade = Math.min(1, (since - 420) / 1800);
-        targetZoom = close * (1.1 - fade * 0.34);
-      }
+      tx = this.lastProjectile.x + Math.cos(angle) * 20;
+      ty = this.lastProjectile.y + Math.sin(angle) * 20;
     }
-    const ease = 1 - Math.exp(-delta / 130);
+    const ease = 1 - Math.exp(-delta / 65);
     this.cine.focusX += (tx - this.cine.focusX) * ease;
     this.cine.focusY += (ty - this.cine.focusY) * ease;
-    this.cine.zoom += (targetZoom - this.cine.zoom) * (1 - Math.exp(-delta / 210));
-    cam.setZoom(this.cine.zoom);
-    const hudOffset = ((this.hudBottom - this.hudTop) * 0.5) / this.cine.zoom;
-    cam.centerOn(this.cine.focusX, this.cine.focusY + hudOffset);
+    this.cine.zoom = framing.zoom;
+    cam.setZoom(framing.zoom);
+    const hudOffset = ((this.hudBottom - this.hudTop) * 0.5) / framing.zoom;
+    cam.centerOn(
+      this.cine.wideX + (this.cine.focusX - this.cine.wideX) * framing.tracking,
+      this.cine.wideY + (this.cine.focusY + hudOffset - this.cine.wideY) * framing.tracking,
+    );
     this.updateDetail();
   }
 

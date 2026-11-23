@@ -59,6 +59,23 @@ export const CAMERA = {
   lodZoom: 1.22,
 } as const;
 
+/** Replay-time camera framing, independent of frame rate and playback speed. */
+export function shotCameraFrame(elapsed: number, impactTime: number, duration: number, wideZoom: number, closeZoom: number): { tracking: number; zoom: number } {
+  const clamp = (value: number): number => Math.max(0, Math.min(1, value));
+  const smooth = (value: number): number => {
+    const t = clamp(value);
+    return t * t * (3 - 2 * t);
+  };
+  const opening = smooth(elapsed / 360);
+  const returnStart = Math.min(impactTime + 300, Math.max(impactTime, duration - 1));
+  const returning = smooth((elapsed - returnStart) / Math.max(1, duration - returnStart));
+  const tracking = opening * (1 - returning);
+  const impactApproach = smooth((elapsed - (impactTime - 450)) / 450);
+  const flightZoom = Math.max(wideZoom, closeZoom * 0.9);
+  const detailZoom = flightZoom + (Math.max(flightZoom, closeZoom) - flightZoom) * impactApproach;
+  return { tracking, zoom: wideZoom + (detailZoom - wideZoom) * tracking };
+}
+
 export const STAGE = {
   gridColsMin: 24,
   gridColsMax: 35,

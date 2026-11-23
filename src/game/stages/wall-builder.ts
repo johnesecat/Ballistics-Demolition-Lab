@@ -261,12 +261,12 @@ export class WallBuilder {
 /** Axis-aligned rectangle view of a polygon, or null for slopes/braces. */
 function rectOfPolygon(poly: Polygon): { x0: number; y0: number; x1: number; y1: number } | null {
   if (poly.length !== 4) return null;
-  const xs = [...new Set(poly.map((p) => Math.round(p.x * 1000) / 1000))];
-  const ys = [...new Set(poly.map((p) => Math.round(p.y * 1000) / 1000))];
+  const xs = [...new Set(poly.map((p) => p.x))];
+  const ys = [...new Set(poly.map((p) => p.y))];
   if (xs.length !== 2 || ys.length !== 2) return null;
   // Every corner must be present exactly once; a diamond has 2x2 distinct
   // coordinates too, so test the corner set rather than just the extents.
-  const present = new Set(poly.map((p) => `${Math.round(p.x * 1000) / 1000}|${Math.round(p.y * 1000) / 1000}`));
+  const present = new Set(poly.map((p) => `${p.x}|${p.y}`));
   for (const x of xs) for (const y of ys) if (!present.has(`${x}|${y}`)) return null;
   return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
 }
@@ -301,7 +301,8 @@ export function mergeWallRects(walls: Wall[]): Wall[] {
       }
     }
   }
-  const near = (a: number, b: number): boolean => Math.abs(a - b) < 1e-6;
+  // Only exact edges may merge: even a tiny gap in saved damage is real.
+  const near = (a: number, b: number): boolean => a === b;
   let changed = true;
   while (changed) {
     changed = false;
