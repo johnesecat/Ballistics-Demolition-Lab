@@ -54,13 +54,13 @@ export function serializeWallState(state: WallState): string {
   return JSON.stringify(state);
 }
 
-export function deserializeWallState(json: string): WallState {
+export function deserializeWallState(json: string, migrateGeometry = true): WallState {
   const parsed = JSON.parse(json) as WallState;
-  if (!parsed || !Array.isArray(parsed.walls) || typeof parsed.groundY !== 'number') {
+  if (!parsed || !Array.isArray(parsed.walls) || !Number.isFinite(parsed.groundY)) {
     throw new Error('Invalid wall-state save payload');
   }
   for (const w of parsed.walls) {
-    if (!w.id || !w.material || !Array.isArray(w.polygons)) throw new Error('Invalid wall entry in save payload');
+    if (!w || typeof w.id !== 'string' || !w.id || !Object.prototype.hasOwnProperty.call(MATERIALS, w.material) || !Array.isArray(w.polygons) || !w.polygons.every(poly => Array.isArray(poly) && poly.length >= 3 && poly.every(p => p && Number.isFinite(p.x) && Number.isFinite(p.y)))) throw new Error('Invalid wall entry in save payload');
   }
   // Saves written before heat moved to a flat surface list stored it per wall id.
   // Flatten those so an interrupted campaign keeps its scorch marks.
@@ -72,7 +72,8 @@ export function deserializeWallState(json: string): WallState {
       .map((r) => ({ x: r.x, y: r.y, heat: Math.min(1, r.heat), radius: r.radius ?? 20 + r.heat * 34 }));
   }
   if (!Array.isArray(parsed.heat)) parsed.heat = [];
-  parsed.walls = mergeWallRects(parsed.walls);
+  parsed.heat = parsed.heat.filter(r => r && Number.isFinite(r.x) && Number.isFinite(r.y) && Number.isFinite(r.heat) && Number.isFinite(r.radius) && r.radius > 0 && (!r.material || Object.prototype.hasOwnProperty.call(MATERIALS, r.material)));
+  if (migrateGeometry) parsed.walls = mergeWallRects(parsed.walls);
   return cloneWallState(parsed);
 }
 

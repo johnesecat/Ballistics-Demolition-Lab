@@ -1,6 +1,10 @@
 import { AIM, SAVE } from './config';
 import { AMMO_BY_ID, STARTER_AMMO_ID } from './ammo/catalogue';
 import { ALL_STAGES, STAGES_BY_ID } from './stages/campaign';
+import type { AimState } from './BattleScene';
+import type { StageSnapshot } from './stages/types';
+import { cloneSnapshot } from './stages/types';
+import { deserializeWallState } from './sim/wall-simulator';
 
 export type TrajectorySetting = 'full' | 'hidden';
 
@@ -19,6 +23,15 @@ export interface StageRecord {
   cleared: boolean;
 }
 
+export interface MissionSave {
+  stageId: string;
+  snapshot: StageSnapshot;
+  shotsUsed: number;
+  aim: AimState;
+  /** A shot was already simulated when the page closed during its replay. */
+  pending: { coreDamage: number; cellDamage: number } | null;
+}
+
 export interface SaveData {
   version: number;
   settings: Settings;
@@ -27,6 +40,7 @@ export interface SaveData {
   lastStageId: string;
   preferredAmmo: string;
   totalShots: number;
+  mission: MissionSave | null;
 }
 
 export type LoadIssue = 'corrupt' | 'newer' | 'storage-unavailable' | null;
@@ -55,6 +69,7 @@ function defaultData(): SaveData {
     lastStageId: ALL_STAGES[0]?.id ?? '',
     preferredAmmo: STARTER_AMMO_ID,
     totalShots: 0,
+    mission: null,
   };
 }
 
@@ -99,6 +114,29 @@ function cleanResults(raw: unknown): Record<string, StageRecord> {
   return output;
 }
 
+function cleanMission(raw: unknown, migrateGeometry: boolean): MissionSave | null {
+  if (!isRecord(raw) || typeof raw.stageId !== 'string') return null;
+  const stage = STAGES_BY_ID.get(raw.stageId);
+  if (!stage || !Number.isInteger(raw.shotsUsed) || (raw.shotsUsed as number) < 0 || (raw.shotsUsed as number) > stage.shots) return null;
+  if (!isRecord(raw.snapshot) || !isRecord(raw.snapshot.grid) || !isRecord(raw.snapshot.core) || !Array.isArray(raw.snapshot.relays) || !isRecord(raw.aim)) return null;
+  const grid = raw.snapshot.grid;
+  const core = raw.snapshot.core;
+  const aim = raw.aim;
+  if (!Number.isInteger(grid.cols) || !Number.isInteger(grid.rows) || (grid.cols as number) < 1 || (grid.rows as number) < 1 || (grid.cols as number) > 200 || (grid.rows as number) > 200 || !Array.isArray(grid.cells) || (grid.cells.length !== grid.rows && !(grid.cells.length === 0 && isRecord(raw.snapshot.wallState))) || !grid.cells.every(row => Array.isArray(row) && row.length === grid.cols) || ![grid.originX, grid.originY, grid.tile].every(Number.isFinite) || (grid.tile as number) <= 0) return null;
+  if (![core.x, core.y, core.radius, core.hp, core.maxHp].every(Number.isFinite) || typeof core.dropped !== 'boolean' || typeof core.destroyed !== 'boolean') return null;
+  if (!raw.snapshot.relays.every(r => isRecord(r) && typeof r.id === 'string' && typeof r.alive === 'boolean' && typeof r.label === 'string' && Array.isArray(r.cells) && r.cells.every((c: unknown) => isRecord(c) && Number.isInteger(c.col) && Number.isInteger(c.row)))) return null;
+  if (!Number.isFinite(aim.angleDeg) || !Number.isFinite(aim.power) || (aim.angleDeg as number) < AIM.minDeg || (aim.angleDeg as number) > AIM.maxDeg || (aim.power as number) < 40 || (aim.power as number) > 441 || (aim.mode !== 'arc' && aim.mode !== 'straight') || typeof aim.ammoId !== 'string' || !AMMO_BY_ID.has(aim.ammoId)) return null;
+  const pending = raw.pending;
+  if (pending != null && (!isRecord(pending) || !Number.isFinite(pending.coreDamage) || !Number.isFinite(pending.cellDamage))) return null;
+  try {
+    const snapshot = raw.snapshot as unknown as StageSnapshot;
+    if (snapshot.wallState) snapshot.wallState = deserializeWallState(JSON.stringify(snapshot.wallState), migrateGeometry);
+    return { stageId: raw.stageId, snapshot: cloneSnapshot(snapshot), shotsUsed: raw.shotsUsed as number, aim: { ...aim } as unknown as AimState, pending: pending == null ? null : { coreDamage: (pending as {coreDamage: number}).coreDamage, cellDamage: (pending as {cellDamage: number}).cellDamage } };
+  } catch {
+    return null;
+  }
+}
+
 /** Validate and salvage a parsed save. Unknown fields are discarded. */
 export function sanitizeSave(raw: unknown): { data: SaveData; issue: LoadIssue } {
   const base = defaultData();
@@ -129,6 +167,7 @@ export function sanitizeSave(raw: unknown): { data: SaveData; issue: LoadIssue }
       lastStageId,
       preferredAmmo,
       totalShots: Math.max(0, Math.round(toNumber(raw.totalShots, 0))),
+      mission: cleanMission(raw.mission, version < SAVE.version),
     },
     issue: null,
   };
@@ -244,12 +283,26 @@ export class SaveStore {
         return false;
       }
       this.writeRaw(JSON.stringify(this.data));
-      this.issue = this.memoryOnly ? 'storage-unavailable' : this.issue;
+      if (this.memoryOnly) {
+        this.issue = 'storage-unavailable';
+        this.issueMessage = 'Local storage is unavailable. Progress will last for this session only.';
+        return false;
+      }
       return true;
     } catch {
       this.issue = 'storage-unavailable';
       return false;
     }
+  }
+
+  setMission(mission: MissionSave): void {
+    this.data.mission = { ...mission, snapshot: cloneSnapshot(mission.snapshot), aim: { ...mission.aim }, pending: mission.pending ? { ...mission.pending } : null };
+    this.save();
+  }
+
+  clearMission(): void {
+    this.data.mission = null;
+    this.save();
   }
 
   get settings(): Settings {
@@ -327,6 +380,7 @@ export class SaveStore {
     if (firstClear) this.data.firstClears.push(stageId);
     this.data.totalShots += shotsUsed;
     this.data.lastStageId = stageId;
+    this.data.mission = null;
     this.save();
     return {
       newBest,

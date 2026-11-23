@@ -1,5 +1,5 @@
 import { Rng } from '../rng';
-import type { MaterialId } from '../materials';
+import { MATERIALS, type MaterialId } from '../materials';
 
 export interface Point { x: number; y: number }
 export type Polygon = Point[];
@@ -226,14 +226,22 @@ function fractureBox(wall: Wall, left: number, top: number, right: number, botto
     const maxX = Math.max(...inside.map((p) => p.x));
     const minY = Math.min(...inside.map((p) => p.y));
     const maxY = Math.max(...inside.map((p) => p.y));
-    const cols = Math.ceil((maxX - minX) / fragmentSize);
-    const rows = Math.ceil((maxY - minY) / fragmentSize);
+    // A timber beam splits lengthwise along its long axis; masonry and metal
+    // retain compact chips. All pieces still partition the exact removed area.
+    const wood = wall.material === 'wood';
+    const xs = polygon.map(p => p.x);
+    const ys = polygon.map(p => p.y);
+    const horizontalGrain = Math.max(...xs) - Math.min(...xs) >= Math.max(...ys) - Math.min(...ys);
+    const fragmentWidth = wood ? fragmentSize * (horizontalGrain ? 2 : 0.5) : fragmentSize;
+    const fragmentHeight = wood ? fragmentSize * (horizontalGrain ? 0.5 : 2) : fragmentSize;
+    const cols = Math.ceil((maxX - minX) / fragmentWidth);
+    const rows = Math.ceil((maxY - minY) / fragmentHeight);
     if (cols * rows > 100000) throw new RangeError('Fracture would create too many fragments');
     for (let row = 0; row < rows; row += 1) {
       for (let col = 0; col < cols; col += 1) {
-        const x = minX + col * fragmentSize;
-        const y = minY + row * fragmentSize;
-        const part = intersectBox(inside, x, y, x + fragmentSize, y + fragmentSize);
+        const x = minX + col * fragmentWidth;
+        const y = minY + row * fragmentHeight;
+        const part = intersectBox(inside, x, y, x + fragmentWidth, y + fragmentHeight);
         if (part.length) fragments.push({ wallId: wall.id, material: wall.material, polygon: part });
       }
     }
@@ -449,6 +457,16 @@ export function heatColor(heat: number, base?: number): number {
   return 0xffffff;
 }
 
+/** Timber chars dark brown, masonry scorches, and only metal uses the hot-metal ramp. */
+export function materialHeatColor(material: MaterialId, heat: number): number {
+  if (MATERIALS[material].isMetal) return heatColor(heat, MATERIALS[material].colors.base);
+  const base = MATERIALS[material].colors.base;
+  const target = material === 'wood' ? 0x23150f : 0x353330;
+  const amount = Math.max(0, Math.min(1, heat)) * (material === 'wood' ? 0.82 : 0.55);
+  const blend = (shift: number): number => Math.round(((base >> shift) & 255) * (1 - amount) + ((target >> shift) & 255) * amount);
+  return (blend(16) << 16) | (blend(8) << 8) | blend(0);
+}
+
 /** Turn fracture fragments into flying bodies. Velocities are deterministic:
  * same seed + same impact always produces the same debris field. Heat falls
  * off with distance from the impact point. */
@@ -465,13 +483,17 @@ export function spawnFragmentBodies(
     const centroid = fragment.polygon.reduce((sum, p) => ({ x: sum.x + p.x / fragment.polygon.length, y: sum.y + p.y / fragment.polygon.length }), { x: 0, y: 0 });
     const dist = Math.hypot(centroid.x - impact.x, centroid.y - impact.y);
     const heat = Math.max(0, Math.min(1, maxHeat * Math.exp(-dist / 40)));
+    // Use area × density as a 2D mass proxy; equal impulse accelerates lighter
+    // fragments more. The bounded square-root response keeps tiny chips stable.
+    const mass = Math.max(1, polygonArea(fragment.polygon) * MATERIALS[fragment.material].density);
+    const response = Math.max(0.3, Math.min(1.65, Math.sqrt(56 / mass)));
     const spread = 60;
     return {
       fragment,
       x: centroid.x,
       y: centroid.y,
-      vx: impulse.x + rng.range(-spread, spread),
-      vy: impulse.y + rng.range(-spread, spread) - 40,
+      vx: (impulse.x + rng.range(-spread, spread)) * response,
+      vy: (impulse.y + rng.range(-spread, spread)) * response - 40,
       angle: rng.range(-Math.PI, Math.PI),
       angularVelocity: rng.range(-4, 4),
       heat,
@@ -654,12 +676,12 @@ export function stepFragmentBodies(
           b.y += ny * overlap * bMove;
           const vn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
           if (vn < 0) {
-            const invA = aStatic ? 0 : 1;
-            const invB = bStatic ? 0 : 1;
+            const invA = aStatic ? 0 : 1 / Math.max(1, polygonArea(a.fragment.polygon) * MATERIALS[a.fragment.material].density);
+            const invB = bStatic ? 0 : 1 / Math.max(1, polygonArea(b.fragment.polygon) * MATERIALS[b.fragment.material].density);
             const total = invA + invB || 1;
             const impulse = -1.08 * vn / total;
-            if (invA) { a.vx -= impulse * nx; a.vy -= impulse * ny; }
-            if (invB) { b.vx += impulse * nx; b.vy += impulse * ny; }
+            if (invA) { a.vx -= impulse * invA * nx; a.vy -= impulse * invA * ny; }
+            if (invB) { b.vx += impulse * invB * nx; b.vy += impulse * invB * ny; }
             if (a.sleeping && Math.abs(vn) > 18) { a.sleeping = false; a.rest = 0; }
             if (b.sleeping && Math.abs(vn) > 18) { b.sleeping = false; b.rest = 0; }
           }

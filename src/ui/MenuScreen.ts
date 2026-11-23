@@ -18,7 +18,7 @@ export function renderMenu(options: MenuOptions): HTMLElement {
   const save = options.save;
   const cleared = ALL_STAGES.filter((stage) => save.isCleared(stage.id)).length;
   const totalStars = ALL_STAGES.reduce((sum, stage) => sum + (save.stageRecord(stage.id)?.stars ?? 0), 0);
-  const nextId = save.firstIncompleteUnlockedStage();
+  const nextId = save.data.mission?.stageId ?? save.firstIncompleteUnlockedStage();
   const next = getStage(nextId) ?? ALL_STAGES[0]!;
   const record = save.stageRecord(next.id);
   const chapter = CHAPTERS[next.chapterIndex] ?? CHAPTERS[0]!;
@@ -55,7 +55,7 @@ export function renderMenu(options: MenuOptions): HTMLElement {
         </p>
         <div class="menu-actions">
           <button type="button" class="primary-button menu-play" data-action="play">
-            <span>${allCleared ? 'REPLAY LAST BATTERY' : record ? 'CONTINUE CAMPAIGN' : 'BEGIN CAMPAIGN'}</span>
+            <span>${save.data.mission ? 'RESUME MISSION' : allCleared ? 'REPLAY LAST BATTERY' : record ? 'CONTINUE CAMPAIGN' : 'BEGIN CAMPAIGN'}</span>
             <span class="button-arrow" aria-hidden="true">→</span>
           </button>
           <button type="button" class="secondary-button" data-action="campaign">STAGE SELECT</button>
@@ -72,7 +72,7 @@ export function renderMenu(options: MenuOptions): HTMLElement {
 
       <aside class="continue-card">
         <div class="continue-topline">
-          <span>${allCleared ? 'ALL BATTERIES CLEARED' : 'NEXT DEPLOYMENT'}</span>
+          <span>${save.data.mission ? 'MISSION IN PROGRESS' : allCleared ? 'ALL BATTERIES CLEARED' : 'NEXT DEPLOYMENT'}</span>
           <span class="continue-chapter">CH. ${romanChapter(next.chapterIndex)}</span>
         </div>
         <div class="continue-code">${next.code}</div>
@@ -93,7 +93,7 @@ export function renderMenu(options: MenuOptions): HTMLElement {
           <div class="continue-star-target">${starsHtml(3, 3, 'is-target')}<span>3★ ≤ ${next.starShots}</span></div>
         </div>
         <button type="button" class="deploy-button" data-action="play">
-          <span class="deploy-kicker">${allCleared ? 'RE-ENTER' : 'DEPLOY'}</span>
+          <span class="deploy-kicker">${save.data.mission ? 'RESUME' : allCleared ? 'RE-ENTER' : 'DEPLOY'}</span>
           <span>${next.code}</span>
           <span class="deploy-arrow" aria-hidden="true">↗</span>
         </button>

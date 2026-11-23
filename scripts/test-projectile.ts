@@ -104,3 +104,5 @@ assert.equal(returned.tracking, 0);
 assert.equal(returned.zoom, 0.8);
 assert.deepEqual(shotCameraFrame(700, 1400, 2600, 0.8, 1.8), following, 'camera framing is replay-time deterministic');
 console.log('shot camera framing: ok');
+// Reference impact close-ups are appreciably tighter than the shell-follow view.
+assert(impactView.zoom >= following.zoom * 1.2, 'impact zoom should tighten beyond the flight framing');

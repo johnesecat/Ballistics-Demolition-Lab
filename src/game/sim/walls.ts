@@ -222,7 +222,7 @@ export function addHeat(
   // footage shows embers around brick and timber breaches, not only steel.
   const list = state.heat;
   for (const region of list) {
-    if (Math.hypot(region.x - x, region.y - y) <= Math.max(region.radius, radius) * 0.25) {
+    if (region.material === material && Math.hypot(region.x - x, region.y - y) <= Math.max(region.radius, radius) * 0.25) {
       const total = region.heat + heat * 0.35;
       region.x = (region.x + x) / 2;
       region.y = (region.y + y) / 2;
@@ -271,7 +271,7 @@ function pruneHeat(state: WallState): void {
     for (let i = 0; i < state.heat.length; i += 1) {
       for (let j = i + 1; j < state.heat.length; j += 1) {
         const a = state.heat[i]!; const b = state.heat[j]!;
-        const d = Math.hypot(a.x - b.x, a.y - b.y);
+        const d = Math.hypot(a.x - b.x, a.y - b.y) + (a.material === b.material ? 0 : 100000);
         if (d < bestD) { bestD = d; bestI = i; bestJ = j; }
       }
     }
@@ -281,6 +281,7 @@ function pruneHeat(state: WallState): void {
       y: (a.y * a.heat + b.y * b.heat) / (a.heat + b.heat),
       heat: Math.min(1, a.heat + b.heat * 0.3),
       radius: Math.min(240, Math.max(a.radius, b.radius) * 1.05),
+      material: a.material,
     };
     state.heat[bestI] = merged;
     state.heat.splice(bestJ, 1);

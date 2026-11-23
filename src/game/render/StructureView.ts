@@ -1,8 +1,8 @@
 import Phaser from 'phaser';
-import { MATERIALS } from '../materials';
+import { MATERIALS, type MaterialId } from '../materials';
 import { WORLD } from '../config';
-import { heatColor, type FragmentBody, type Polygon } from '../sim/fracture';
-import type { WallState } from '../sim/walls';
+import { materialHeatColor, type FragmentBody, type Polygon } from '../sim/fracture';
+import { materialAt, pointInPolygon, type WallState } from '../sim/walls';
 import { pixelRuns } from './pixel-raster';
 
 /**
@@ -219,7 +219,7 @@ export class StructureView {
         // are subdivided first so a long plate can actually curve instead of
         // only moving its four far-away corners.
         const refined = refinePolygon(poly, 12);
-        const bent = this.bendPoly(refined, this.lastWalls, def.isMetal ? 1.6 : 1);
+        const bent = def.isMetal ? this.bendPoly(refined, this.lastWalls, 1.6) : refined;
         this.fillPixelPoly(g, bent, def.colors, focused ? focusCell : cell);
         mask.beginPath();
         mask.moveTo(bent[0]!.x, bent[0]!.y);
@@ -256,12 +256,22 @@ export class StructureView {
     if (bodies.length === 0) return;
     const px = pixelWorldSize(this.scene);
     for (const b of bodies) {
-      const col = b.heat >= 0.5 ? heatColor(b.heat) : MATERIALS[b.fragment.material].colors.base;
+      const col = b.heat >= 0.5 ? materialHeatColor(b.fragment.material, b.heat) : MATERIALS[b.fragment.material].colors.base;
       g.fillStyle(col, b.sleeping ? 0.9 : 1);
-      // Debris is always a ~2.6 screen-pixel cube, so per-cube canvas rotation
-      // was invisible while forcing a transform + draw-call flush per body.
-      // Axis-aligned rects batch into one pass and look identical at this size.
-      g.fillRect(b.x - px / 2, b.y - px / 2, px, px);
+      // Build larger pieces from square pixels: timber reads as a splinter,
+      // concrete as a compact chunk, and other material as single chips.
+      const material = b.fragment.material;
+      const xs = b.fragment.polygon.map(p => p.x);
+      const ys = b.fragment.polygon.map(p => p.y);
+      const width = Math.max(...xs) - Math.min(...xs);
+      const height = Math.max(...ys) - Math.min(...ys);
+      if (material === 'wood' && Math.max(width, height) > 2 * Math.min(width, height)) {
+        for (let i = -1; i <= 1; i += 1) g.fillRect(b.x - px / 2 + (width >= height ? i * px : 0), b.y - px / 2 + (width < height ? i * px : 0), px, px);
+      } else if ((material === 'concrete' || material === 'slopes') && width * height > 45) {
+        for (let row = 0; row < 2; row += 1) for (let col = 0; col < 2; col += 1) g.fillRect(b.x - px + col * px, b.y - px + row * px, px, px);
+      } else {
+        g.fillRect(b.x - px / 2, b.y - px / 2, px, px);
+      }
     }
   }
 
@@ -280,7 +290,7 @@ export class StructureView {
   private drawHeatField(state: WallState): void {
     const hg = this.heatLayer;
     if (state.heat.length === 0 || state.walls.length === 0) return;
-    const field = new Map<number, { heat: number; base: number }>();
+    const field = new Map<number, { heat: number; material: MaterialId }>();
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
@@ -302,6 +312,9 @@ export class StructureView {
     const cols = Math.ceil((maxX - minX) / step);
     for (const r of state.heat) {
       if (r.heat <= 0.03) continue;
+      const material = r.material ?? materialAt(state.walls, r);
+      if (!material) continue;
+      const surfaces = state.walls.filter(w => w.material === material).flatMap(w => w.polygons).map(poly => ({ poly, minX: Math.min(...poly.map(p => p.x)), maxX: Math.max(...poly.map(p => p.x)), minY: Math.min(...poly.map(p => p.y)), maxY: Math.max(...poly.map(p => p.y)) }));
       const radius = r.radius > 0 ? r.radius : 20 + r.heat * 34;
       const gx0 = Math.max(0, Math.floor((r.x - radius - minX) / step));
       const gx1 = Math.min(cols - 1, Math.ceil((r.x + radius - minX) / step));
@@ -312,7 +325,7 @@ export class StructureView {
           const px = minX + (gx + 0.5) * step;
           const py = minY + (gy + 0.5) * step;
           const frac = Math.hypot(px - r.x, py - r.y) / radius;
-          if (frac > 1) continue;
+          if (frac > 1 || !surfaces.some(s => px >= s.minX && px <= s.maxX && py >= s.minY && py <= s.maxY && pointInPolygon({ x: px, y: py }, s.poly))) continue;
           // Cool fast with distance. A nearly flat falloff painted whole faces
           // amber and read as gold tiles; the footage keeps the bright burn
           // tight to the breach and lets it fade within about a third of the
@@ -322,8 +335,7 @@ export class StructureView {
           const key = gy * cols + gx;
           const prev = field.get(key);
           if (prev === undefined || heat > prev.heat) {
-            // Dynamically chosen from the material's own color.
-            field.set(key, { heat, base: MATERIALS[r.material ?? 'steel'].colors.base });
+            field.set(key, { heat, material });
           }
         }
       }
@@ -337,7 +349,7 @@ export class StructureView {
       const gy = Math.floor(key / cols);
       const px = minX + gx * step;
       const py = minY + gy * step;
-      hg.fillStyle(heatColor(cell.heat, cell.base), 0.94);
+      hg.fillStyle(materialHeatColor(cell.material, cell.heat), 0.94);
       hg.fillRect(px, py, step, step);
     }
   }
@@ -348,6 +360,7 @@ export class StructureView {
     return poly.map((p) => {
       let bloom: { x: number; y: number; radius: number; heat: number } | null = null;
       for (const r of state.heat) {
+        if (r.material && !MATERIALS[r.material].isMetal) continue;
         const d = Math.hypot(p.x - r.x, p.y - r.y);
         if (d > r.radius) continue;
         const h = r.heat * (1 - d / r.radius);

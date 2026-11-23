@@ -26,7 +26,6 @@ interface MissionRuntime {
   over: boolean;
   pausedForMenu: boolean;
   aim: AimState;
-  lastResult: ShotResult | null;
 }
 
 type AppMode = 'boot' | 'menu' | 'campaign' | 'armory' | 'settings' | 'mission' | 'results';
@@ -117,7 +116,10 @@ export class App {
     this.scene = scene;
     scene.setCallbacks({
       onAimChanged: (aim) => {
-        if (this.mission) this.mission.aim = aim;
+        if (this.mission) {
+          this.mission.aim = aim;
+          this.mission.ammoId = aim.ammoId;
+        }
         this.hud?.updateAim(aim);
       },
       onPreview: (preview) => {
@@ -177,7 +179,9 @@ export class App {
     document.addEventListener('contextmenu', (event) => {
       if (this.mode === 'mission') event.preventDefault();
     });
+    window.addEventListener('pagehide', () => this.checkpointMission());
     document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.checkpointMission();
       if (document.hidden && this.mode === 'mission' && this.scene?.getReplayState().phase === 'playing') {
         this.scene.setReplayPaused(true);
       }
@@ -201,6 +205,7 @@ export class App {
 
   // ── screens ──────────────────────────────────────────────────────────────
   private showScreen(element: HTMLElement, mode: AppMode, ambient = true): void {
+    this.checkpointMission();
     this.clearOverlays();
     this.stopReplayTicker();
     this.mission = null;
@@ -221,8 +226,12 @@ export class App {
       issueMessage: this.save.issueMessage,
       audioOn: this.save.settings.musicVolume > 0,
       onPlay: () => {
-        const id = this.save.firstIncompleteUnlockedStage();
-        this.openBriefing(id || ALL_STAGES[0]!.id);
+        const saved = this.save.data.mission;
+        if (saved) this.startMission(saved.stageId, true);
+        else {
+          const id = this.save.firstIncompleteUnlockedStage();
+          this.openBriefing(id || ALL_STAGES[0]!.id);
+        }
       },
       onCampaign: () => this.showCampaign(this.save.data.lastStageId),
       onArmory: () => this.showArmory(),
@@ -311,14 +320,14 @@ export class App {
           onBack: () => this.popOverlay(),
           onPlay: () => {
             this.clearOverlays();
-            this.startMission(stage.id);
+            this.startMission(stage.id, this.save.data.mission?.stageId === stage.id);
           },
         }),
       onEscape: () => this.popOverlay(),
     });
   }
 
-  private startMission(stageId: string): void {
+  private startMission(stageId: string, resume = false): void {
     const def = getStage(stageId);
     if (!def) return;
     if (!this.scene) {
@@ -339,20 +348,20 @@ export class App {
     }
     this.clearOverlays();
     this.stopReplayTicker();
+    const saved = resume && this.save.data.mission?.stageId === def.id ? this.save.data.mission : null;
     this.save.setLastStage(def.id);
     const preferred = AMMO_BY_ID.has(this.save.data.preferredAmmo)
       ? this.save.data.preferredAmmo
       : def.suggestedAmmo[0] ?? 'aphe-hybrid';
-    const ammoId = AMMO_BY_ID.has(preferred) ? preferred : 'aphe-hybrid';
+    const ammoId = saved?.aim.ammoId ?? (AMMO_BY_ID.has(preferred) ? preferred : 'aphe-hybrid');
     this.mission = {
       def,
       built,
       ammoId,
-      shotsUsed: 0,
+      shotsUsed: saved?.shotsUsed ?? 0,
       over: false,
       pausedForMenu: false,
       aim: { angleDeg: 42, power: 330, mode: 'arc', ammoId },
-      lastResult: null,
     };
     this.mode = 'mission';
     this.el.screenLayer.hidden = true;
@@ -360,16 +369,26 @@ export class App {
     this.el.overlayLayer.hidden = true;
     this.hud?.show();
     this.lastPreview = null;
-    this.scene.startMission(built, ammoId, this.save.settings);
+    this.scene.startMission(built, ammoId, this.save.settings, saved ? { snapshot: saved.snapshot, aim: saved.aim } : undefined);
     const aim = this.scene.getAim();
     this.mission.aim = aim;
-    this.hud?.showMission(def, built, aim, getAmmo(aim.ammoId), 0);
+    this.hud?.showMission(def, built, aim, getAmmo(aim.ammoId), this.mission.shotsUsed);
     const snapshot = this.scene.getRuntimeSnapshot();
     if (snapshot) this.hud?.updateObjective(snapshot);
     this.hud?.setPreview(this.lastPreview);
     document.body.dataset.view = 'mission';
     this.updateOrientationPrompt();
+    if (saved?.pending) this.handleShotFinished({ final: saved.snapshot, ...saved.pending });
+    else this.checkpointMission();
     requestAnimationFrame(() => requestAnimationFrame(() => this.syncHudLayout()));
+  }
+
+  private checkpointMission(): void {
+    if (!this.mission || this.mission.over || !this.scene) return;
+    const pending = this.scene.getPendingShot();
+    const snapshot = pending?.final ?? this.scene.getRuntimeSnapshot();
+    if (!snapshot) return;
+    this.save.setMission({ stageId: this.mission.def.id, snapshot, shotsUsed: this.mission.shotsUsed, aim: this.mission.aim, pending: pending ? { coreDamage: pending.coreDamage, cellDamage: pending.cellDamage } : null });
   }
 
   private syncHudLayout(): void {
@@ -394,6 +413,7 @@ export class App {
   private handleShotStarted(): void {
     if (!this.mission) return;
     this.mission.shotsUsed += 1;
+    this.checkpointMission();
     this.hud?.setPreview(null);
     this.hud?.updateShots(this.mission.shotsUsed);
     this.hud?.setBusy(true);
@@ -412,14 +432,14 @@ export class App {
     }
   }
 
-  private handleShotFinished(result: ShotResult): void {
+  private handleShotFinished(result: Pick<ShotResult, 'final' | 'coreDamage' | 'cellDamage'>): void {
     if (!this.mission) return;
-    this.mission.lastResult = result;
     this.stopReplayTicker();
     const evaluation = this.evaluate(result.final);
     const shotsLeft = Math.max(0, this.mission.def.shots - this.mission.shotsUsed);
     this.hud?.updateObjective(result.final);
     if (!evaluation.success && !evaluation.fatal && shotsLeft > 0) {
+      this.checkpointMission();
       this.hud?.updateShots(this.mission.shotsUsed);
       this.hud?.setBusy(false);
       const message =
@@ -445,6 +465,7 @@ export class App {
       this.save.setLastStage(this.mission.def.id);
       this.audio.play('success');
     } else {
+      this.save.clearMission();
       this.audio.play('failure');
     }
     const definition = this.mission.def;

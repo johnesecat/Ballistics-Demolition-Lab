@@ -93,7 +93,7 @@ export function renderBriefing(options: BriefingOptions): HTMLElement {
           <span>${alreadyCleared ? 'REPLAY BATTERY' : 'FIRST DEPLOYMENT'}</span>
           <strong>${stage.code} · ${stage.name}</strong>
         </div>
-        <button type="button" class="primary-button launch-button" data-action="play">PLAY MISSION <span aria-hidden="true">→</span></button>
+        <button type="button" class="primary-button launch-button" data-action="play">${save.data.mission?.stageId === stage.id ? 'RESUME MISSION' : 'PLAY MISSION'} <span aria-hidden="true">→</span></button>
       </footer>
     </div>
   `;

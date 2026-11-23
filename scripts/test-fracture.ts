@@ -153,3 +153,18 @@ assert.ok(faller.sleeping, 'debris resting on a beam should sleep');
 assert.ok(Math.abs(upper.y - lower.y) >= 5.4, 'stacked debris must not overlap');
 assert.ok(upper.sleeping && lower.sleeping, 'a settled pile should sleep');
 console.log('Debris-vs-wall and stacking checks passed');
+
+// Equal impulse moves lighter fragments farther; replay remains deterministic.
+const sameShape = [{x: 0, y: 0}, {x: 6, y: 0}, {x: 6, y: 6}, {x: 0, y: 6}];
+const woodFragment = {wallId: 'w', material: 'wood' as const, polygon: sameShape};
+const metalFragment = {...woodFragment, material: 'armor' as const};
+const woodBody = spawnFragmentBodies([woodFragment], {x: 3, y: 3}, {x: 200, y: 0}, 9)[0]!;
+const metalBody = spawnFragmentBodies([metalFragment], {x: 3, y: 3}, {x: 200, y: 0}, 9)[0]!;
+assert.ok(woodBody.vx > metalBody.vx, 'heavier material receives less velocity from the same impulse');
+const largeWood = spawnFragmentBodies([{...woodFragment, polygon: sameShape.map(p => ({x:p.x * 3,y:p.y * 3}))}], {x: 9, y: 9}, {x: 200,y: 0}, 9)[0]!;
+assert.ok(woodBody.vx > largeWood.vx, 'large fragments receive less velocity than small fragments');
+const splinters = fractureWall({ ...wall, material: 'wood' }, {x: 50, y: 20}, 10, 4).fragments;
+assert.ok(splinters.some(f => {
+  const xs = f.polygon.map(p => p.x), ys = f.polygon.map(p => p.y);
+  return (Math.max(...xs) - Math.min(...xs)) > 2 * (Math.max(...ys) - Math.min(...ys));
+}), 'wood breaks into elongated grain-direction splinters');

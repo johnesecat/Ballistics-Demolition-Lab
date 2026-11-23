@@ -100,3 +100,12 @@ const uAnchor = survivorHeatPoint(uBlock, { x: 50, y: 10 });
 assert.ok(uAnchor && onGeometry(uBlock, uAnchor), 'concave anchor must not be pushed into the notch');
 
 console.log('Survivor heat anchors place heat on surviving geometry, not in breaches');
+
+import { addHeat, type WallState } from '../src/game/sim/walls';
+import { materialHeatColor } from '../src/game/sim/fracture';
+const stains: WallState = {walls: [], heat: [], groundY: 100, version: 1};
+addHeat(stains, 0, 0, 1, 20, 'wood');
+addHeat(stains, 0, 0, 1, 20, 'steel');
+assert.equal(stains.heat.length, 2, 'heat stains for different materials must not merge');
+assert.notEqual(materialHeatColor('wood', 1), materialHeatColor('steel', 1), 'wood chars instead of turning white hot like steel');
+assert.notEqual(materialHeatColor('brick', 1), materialHeatColor('steel', 1), 'masonry does not use the metal heat ramp');

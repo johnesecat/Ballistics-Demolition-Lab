@@ -71,7 +71,7 @@ export function shotCameraFrame(elapsed: number, impactTime: number, duration: n
   const returning = smooth((elapsed - returnStart) / Math.max(1, duration - returnStart));
   const tracking = opening * (1 - returning);
   const impactApproach = smooth((elapsed - (impactTime - 450)) / 450);
-  const flightZoom = Math.max(wideZoom, closeZoom * 0.9);
+  const flightZoom = Math.max(wideZoom, closeZoom * 0.72);
   const detailZoom = flightZoom + (Math.max(flightZoom, closeZoom) - flightZoom) * impactApproach;
   return { tracking, zoom: wideZoom + (detailZoom - wideZoom) * tracking };
 }
@@ -88,7 +88,7 @@ export const STAGE = {
 
 export const SAVE = {
   key: 'breakwater.save',
-  version: 2,
+  version: 3,
   backupPrefix: 'breakwater.save.corrupt.',
 } as const;
 

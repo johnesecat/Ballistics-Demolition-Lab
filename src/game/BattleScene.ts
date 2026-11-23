@@ -327,7 +327,7 @@ export class BattleScene extends Phaser.Scene {
     const height = Math.max(240, this.scale.height);
     // The reference cuts close enough to read the round's pixel body, not just
     // the wall it is about to hit.
-    return Math.max(1.35, Math.min(2.05, height / 300));
+    return Math.max(1.7, Math.min(2.8, height / 225));
   }
 
   private beginCine(result: ShotResult): void {
@@ -516,7 +516,7 @@ export class BattleScene extends Phaser.Scene {
     this.callbacks.onReplayState?.({ phase: 'idle', speed: 1, elapsedMs: 0, durationMs: 0 });
   }
 
-  startMission(stage: BuiltStage, ammoId: string, settings: Settings): void {
+  startMission(stage: BuiltStage, ammoId: string, settings: Settings, restored?: { snapshot: StageSnapshot; aim: AimState }): void {
     this.settings = settings;
     this.tweens.resumeAll();
     this.tweens.timeScale = 1;
@@ -536,7 +536,7 @@ export class BattleScene extends Phaser.Scene {
     this.projectile.setVisible(false);
     this.trailGraphics.setData('points', []);
     this.built = stage;
-    this.runtime = cloneSnapshot({ grid: stage.grid, wallState: stage.wallState, core: stage.core, relays: stage.relays });
+    this.runtime = cloneSnapshot(restored?.snapshot ?? { grid: stage.grid, wallState: stage.wallState, core: stage.core, relays: stage.relays });
     this.wallState = getWallState(this.runtime);
     attachWallState(this.runtime, this.wallState);
     this.viewWallState = this.wallState;
@@ -561,10 +561,10 @@ export class BattleScene extends Phaser.Scene {
     this.mode = 'aiming';
     this.playback = null;
     const ammo = getAmmo(ammoId);
-    const opening = this.findOpeningAim(stage, ammo);
-    this.aim = {
-      angleDeg: opening.angleDeg,
-      power: opening.power,
+    const opening = restored ? null : this.findOpeningAim(stage, ammo);
+    this.aim = restored ? { ...restored.aim } : {
+      angleDeg: opening!.angleDeg,
+      power: opening!.power,
       mode: 'arc',
       ammoId: ammo.id,
       choiceId: ammo.choice?.defaultOption,
@@ -610,6 +610,11 @@ export class BattleScene extends Phaser.Scene {
 
   getRuntimeSnapshot(): StageSnapshot | null {
     return this.runtime ? cloneSnapshot(this.runtime) : null;
+  }
+
+  getPendingShot(): Pick<ShotResult, 'final' | 'coreDamage' | 'cellDamage'> | null {
+    const result = this.playback?.result;
+    return result ? { final: cloneSnapshot(result.final), coreDamage: result.coreDamage, cellDamage: result.cellDamage } : null;
   }
 
   setAimAngle(angleDeg: number): void {
