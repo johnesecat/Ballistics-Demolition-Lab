@@ -48,6 +48,9 @@ export function renderSettings(options: SettingsOptions): HTMLElement {
           <button type="button" class="toggle-setting" data-toggle="reducedEffects" aria-pressed="${settings.reducedEffects}">
             <span><strong>Reduced effects</strong><small>Fewer particles and debris bodies for older devices</small></span><span class="switch"><i></i></span>
           </button>
+          <button type="button" class="toggle-setting" data-toggle="thermalVision" aria-pressed="${settings.thermalVision}">
+            <span><strong>Thermal vision</strong><small>Render the field by heat: cold bodies, white-hot impact zones</small></span><span class="switch"><i></i></span>
+          </button>
           <div class="setting-block">
             <span class="range-copy"><strong>Aim sensitivity</strong><small>How much a touch drag moves the barrel</small></span>
             <div class="range-control"><input type="range" min="45" max="180" value="${Math.round(settings.aimSensitivity * 100)}" data-setting="aimSensitivity" /><output data-out="aimSensitivity">${Math.round(settings.aimSensitivity * 100)}%</output></div>
@@ -105,7 +108,7 @@ export function renderSettings(options: SettingsOptions): HTMLElement {
 
   root.querySelectorAll<HTMLElement>('[data-toggle]').forEach((button) => {
     button.addEventListener('click', () => {
-      const key = button.dataset.toggle as 'cameraShake' | 'reducedEffects';
+      const key = button.dataset.toggle as 'cameraShake' | 'reducedEffects' | 'thermalVision';
       const value = !settings[key];
       settings = { ...settings, [key]: value };
       button.setAttribute('aria-pressed', value ? 'true' : 'false');
@@ -135,7 +138,7 @@ export function renderSettings(options: SettingsOptions): HTMLElement {
       if (out) out.textContent = `${Math.round(value)}%`;
     });
     root.querySelectorAll<HTMLElement>('[data-toggle]').forEach((button) => {
-      const key = button.dataset.toggle as 'cameraShake' | 'reducedEffects';
+      const key = button.dataset.toggle as 'cameraShake' | 'reducedEffects' | 'thermalVision';
       button.setAttribute('aria-pressed', settings[key] ? 'true' : 'false');
       button.classList.toggle('is-on', settings[key]);
     });

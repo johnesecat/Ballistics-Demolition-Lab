@@ -148,6 +148,7 @@ export class App {
       onReplaySkip: () => this.scene?.skipReplay(),
       onReplaySpeed: (speed) => this.scene?.setReplaySpeed(speed),
       onLayout: (top, bottom) => this.scene?.setHudHeight(top, bottom),
+      onToggleThermal: () => this.toggleThermal(),
     });
     this.hud.mount(this.el.hudLayer);
     this.hud.hide();
@@ -295,6 +296,14 @@ export class App {
     });
   }
 
+  /** Thermal camera toggle: a view mode, not a gameplay change. */
+  private toggleThermal(): void {
+    const next = { ...this.save.settings, thermalVision: !this.save.settings.thermalVision };
+    this.applySettings(next);
+    this.hud?.setThermal(next.thermalVision);
+    this.toast(next.thermalVision ? 'THERMAL VIEW ON' : 'THERMAL VIEW OFF');
+  }
+
   private applySettings(next: Settings): void {
     this.save.setSettings(next);
     this.audio.setMusicVolume(next.musicVolume);
@@ -369,10 +378,16 @@ export class App {
     this.el.overlayLayer.hidden = true;
     this.hud?.show();
     this.lastPreview = null;
-    this.scene.startMission(built, ammoId, this.save.settings, saved ? { snapshot: saved.snapshot, aim: saved.aim } : undefined);
+    this.scene.startMission(
+      built,
+      ammoId,
+      this.save.settings,
+      saved ? { snapshot: saved.snapshot, aim: saved.aim, debris: saved.debris } : undefined,
+    );
     const aim = this.scene.getAim();
     this.mission.aim = aim;
     this.hud?.showMission(def, built, aim, getAmmo(aim.ammoId), this.mission.shotsUsed);
+    this.hud?.setThermal(this.save.settings.thermalVision);
     const snapshot = this.scene.getRuntimeSnapshot();
     if (snapshot) this.hud?.updateObjective(snapshot);
     this.hud?.setPreview(this.lastPreview);
@@ -388,7 +403,14 @@ export class App {
     const pending = this.scene.getPendingShot();
     const snapshot = pending?.final ?? this.scene.getRuntimeSnapshot();
     if (!snapshot) return;
-    this.save.setMission({ stageId: this.mission.def.id, snapshot, shotsUsed: this.mission.shotsUsed, aim: this.mission.aim, pending: pending ? { coreDamage: pending.coreDamage, cellDamage: pending.cellDamage } : null });
+    this.save.setMission({
+      stageId: this.mission.def.id,
+      snapshot,
+      shotsUsed: this.mission.shotsUsed,
+      aim: this.mission.aim,
+      pending: pending ? { coreDamage: pending.coreDamage, cellDamage: pending.cellDamage } : null,
+      debris: this.scene.getDebrisRecords(),
+    });
   }
 
   private syncHudLayout(): void {

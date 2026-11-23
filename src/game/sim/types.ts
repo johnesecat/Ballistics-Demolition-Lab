@@ -26,6 +26,24 @@ export interface ProjectileFrame {
   squash?: number;
   /** Layers crossed so far (penetration audit). */
   layers?: number;
+  /**
+   * Shell deform state at this frame. The renderer solves the pixel lattice from
+   * these numbers (squash + buckle + mass + face hardness), which keeps the
+   * replay deterministic while the crumple is still a real mass problem.
+   */
+  shell?: ShellFrameState;
+}
+
+export interface ShellFrameState {
+  squash: number;
+  crumple: number;
+  hardness: number;
+  speed: number;
+  mass: number;
+  integrity: number;
+  seed: number;
+  /** Face material the shell is working against (drives the pixel fracture). */
+  material?: MaterialId | null;
 }
 
 export interface DamageCellDelta {

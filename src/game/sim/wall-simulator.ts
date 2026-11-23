@@ -1,16 +1,17 @@
 import { PHYSICS, WORLD } from '../config';
 import { getAmmo, getPhases } from '../ammo/catalogue';
 import type { AmmoPhase } from '../ammo/types';
-import { MATERIALS } from '../materials';
+import { MATERIALS, type MaterialId } from '../materials';
 import { Rng, hash32 } from '../rng';
 import type { StageDefinition, StageSnapshot } from '../stages/types';
 import { cloneSnapshot } from '../stages/types';
 import { mergeWallRects } from '../stages/wall-builder';
 import { launchVelocity, muzzlePosition, sweepCircleEntry } from './collision';
 import { fractureWall, fractureWallBand, penetrateWalls, raySpanInWall, spawnFragmentBodies, traceWalls, type FractureFragment, type FragmentBody, type Point, type WallContact } from './fracture';
-import type { DamageEvent, EffectEvent, ImpactInfo, ProjectileFrame, ShotInput, ShotResult } from './types';
+import type { DamageEvent, EffectEvent, ImpactInfo, ProjectileFrame, ShellFrameState, ShotInput, ShotResult } from './types';
 import { addHeat, cloneWallState, detachUnsupported, pointInPolygon, pointInWalls, wallsFromSnapshot, type WallState } from './walls';
 import { survivorHeatPoint } from './heat-anchor';
+import { deformHeatedWalls, tearRim } from './wall-deform';
 import { THICKNESS_CAP, crossLayer, makeProjectileBody } from './projectile-body';
 
 /**
@@ -20,6 +21,16 @@ import { THICKNESS_CAP, crossLayer, makeProjectileBody } from './projectile-body
  */
 
 const RESISTANCE: Record<string, number> = { steel: 1.0, armor: 1.25, brick: 0.55, concrete: 0.7, wood: 0.45, slopes: 0.6 };
+
+/**
+ * How hard a face is to a crushing shell, 0..1. Steel and armour hold their
+ * shape and pancake the casing; timber gives way and barely marks the nose.
+ */
+const FACE_HARDNESS: Record<string, number> = { steel: 0.9, armor: 1, concrete: 0.62, brick: 0.45, slopes: 0.55, wood: 0.22 };
+
+function faceHardness(material: string | undefined): number {
+  return material ? (FACE_HARDNESS[material] ?? 0.5) : 0.15;
+}
 const FRAGMENT_SIZE = 7; // world units, fixed — never zoom dependent (P0-13)
 function norm(x: number, y: number): Point { const l = Math.hypot(x, y) || 1; return { x: x / l, y: y / l }; }
 
@@ -217,7 +228,11 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
           // Without this a fast shell passed through a plate and left it
           // untouched, which is not physical: the hole is the visible result
           // of penetration, not just the speed cost.
-          const chips = boreWall(state, wall?.id ?? layer.wallId, entry, exit, Math.max(2.6, ammo.flight.radius * 2));
+          const boreWidth = Math.max(2.6, ammo.flight.radius * 2);
+          const chips = boreWall(state, wall?.id ?? layer.wallId, entry, exit, boreWidth);
+          // The surviving metal around the channel peels outward: a real bore
+          // leaves a torn, opened lip, not a clean drilled hole.
+          state.walls = tearRim(state.walls, entry, boreWidth, mat, pBody.speed);
           if (chips.length > 0) {
             const boreBodies = spawnFragmentBodies(chips, entry, { x: dir.x * 70, y: dir.y * 70 - 26 }, seedFrom(simTime * 1000, rng), 0.18);
             bodies.push(...boreBodies);
@@ -227,7 +242,7 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
           }
           effects.push({ t: simTime * 1000, kind: 'penetrate', x: exit.x, y: exit.y, angle: Math.atan2(dir.y, dir.x), family: ammo.vfx.family, material: mat });
           trajectory.push({ x: exit.x, y: exit.y, angle: Math.atan2(vy, vx) });
-          frames.push({ t: simTime * 1000, x: exit.x, y: exit.y, angle: Math.atan2(vy, vx), scale: 1, visible: true, squash: pBody.squash, layers: pBody.layers });
+          frames.push({ t: simTime * 1000, x: exit.x, y: exit.y, angle: Math.atan2(vy, vx), scale: 1, visible: true, squash: pBody.squash, layers: pBody.layers, shell: shellState(pBody, mat, pBody.speed, simTime * 1000) });
           if (pBody.speed <= 0) { stopContact = layer; stoppedByLayer = true; break; }
           entry = exit;
           // Probe forward for the next layer (thin stacked plates can sit
@@ -301,6 +316,9 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
       const tMs = t * 1000;
       const bodyMark = bodies.length;
       applyPhase(state, bodies, phase, origin, impact, incoming, tMs, def, rng, effects, damageEvents, (a) => { cellDamageArea += a; });
+      // Heat and impact physically bend the metal before support is solved, so
+      // the bend changes what is still connected and what the next shot hits.
+      deformHeatedWalls(state);
       const { walls, detached } = detachUnsupported(state.walls, state.groundY);
       let spawned = bodies.slice(bodyMark);
       if (detached.length) {
@@ -328,7 +346,7 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
   // impact, so a deterministic wreck timeline carries the peeled, tumbling
   // shell through the rest of the replay instead of freezing it on the wall.
   const wreck = terminalImpact && (terminalImpact.kind === 'cell' || terminalImpact.kind === 'ground')
-    ? buildWreckFrames(terminalImpact, impactVx, impactVy, ammo, impactTime * 1000)
+    ? buildWreckFrames(terminalImpact, impactVx, impactVy, ammo, impactTime * 1000, pBody)
     : [];
 
   const core = { ...snapshot.core };
@@ -397,6 +415,7 @@ function buildWreckFrames(
   vy: number,
   ammo: import('../ammo/types').AmmoDef,
   startMs: number,
+  body: { squash: number; integrity: number; layers: number; mass: number },
 ): ProjectileFrame[] {
   const nx = impact.nx;
   const ny = impact.ny;
@@ -425,7 +444,25 @@ function buildWreckFrames(
     // Crumple in view: the casing opens over the first ~110 ms instead of
     // snapping straight to a pancake.
     const crumple = Math.min(1, 0.3 + (elapsed / 0.11) * 0.7);
-    frames.push({ t: startMs + elapsed * 1000, x, y, angle, scale: 0.92, visible: true, squash: crumple });
+    frames.push({
+      t: startMs + elapsed * 1000,
+      x,
+      y,
+      angle,
+      scale: 0.92,
+      visible: true,
+      squash: crumple,
+      shell: {
+        squash: Math.max(body.squash, crumple),
+        crumple: Math.min(1, Math.max(crumple, body.squash * 0.8 + (elapsed / 0.3) * 0.5)),
+        hardness: faceHardness(impact.material),
+        speed: Math.max(0, Math.hypot(vx, vy)),
+        mass: body.mass,
+        integrity: body.integrity,
+        material: impact.material ?? null,
+        seed: (Math.round(startMs) ^ (body.layers * 40503)) >>> 0,
+      },
+    });
     wy += PHYSICS.arcGravity * dt;
     x += wx * dt;
     y += wy * dt;
@@ -545,3 +582,28 @@ function applyPhase(
 }
 
 function seedFrom(tMs: number, rng: Rng): number { return ((tMs * 1000) ^ rng.int(0, 100000)) >>> 0; }
+
+/**
+ * Deform state for one frame: the body's squash plus the face it is working
+ * against. Crushing progresses with the damage the casing has taken, so a round
+ * that crosses three thin plates is visibly mangled by the third.
+ */
+function shellState(
+  body: { squash: number; integrity: number; layers: number; mass: number },
+  material: string | undefined,
+  speed: number,
+  tMs: number,
+): ShellFrameState {
+  const hardness = faceHardness(material);
+  const crumple = Math.min(1, body.squash * (0.55 + hardness * 0.7) + body.layers * 0.08);
+  return {
+    squash: Math.min(1, body.squash),
+    crumple,
+    hardness,
+    speed,
+    mass: body.mass,
+    integrity: body.integrity,
+    material: (material as MaterialId | undefined) ?? null,
+    seed: (Math.round(tMs) ^ (body.layers * 2654435761)) >>> 0,
+  };
+}

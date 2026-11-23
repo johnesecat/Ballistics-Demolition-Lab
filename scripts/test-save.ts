@@ -33,7 +33,11 @@ const snapshot = { grid: stage.grid, wallState: { version: 1 as const, groundY: 
   { id: 'a', material: 'wood' as const, polygons: [[{x: 10, y: 20}, {x: 20, y: 20}, {x: 20, y: 30}, {x: 10, y: 30}]] },
   { id: 'b', material: 'wood' as const, polygons: [[{x: 20, y: 20}, {x: 30, y: 20}, {x: 30, y: 30}, {x: 20, y: 30}]] },
 ] }, core: { ...stage.core, hp: 31 }, relays: stage.relays.map(r => ({...r, alive: false})) };
-missionStore.setMission({ stageId: stage.def.id, snapshot, shotsUsed: 2, aim: { angleDeg: 31, power: 300, mode: 'arc', ammoId: 'aphe-hybrid' }, pending: {coreDamage: 4, cellDamage: 8} });
+const debris = [
+  { m: 'steel' as const, p: [890, 300, 900, 300, 900, 306, 890, 306], x: 894.5, y: 302.25, vx: 0, vy: 0, a: 0.4, av: 0, h: 0.6, s: 1 as const },
+  { m: 'wood' as const, p: [910, 320, 918, 320, 918, 324, 910, 324], x: 913, y: 321, vx: 12.5, vy: -3, a: 1.1, av: 2, h: 0, s: 0 as const },
+];
+missionStore.setMission({ stageId: stage.def.id, snapshot, shotsUsed: 2, aim: { angleDeg: 31, power: 300, mode: 'arc', ammoId: 'aphe-hybrid' }, pending: {coreDamage: 4, cellDamage: 8}, debris });
 const legacy = JSON.parse(missionStorage.getItem(SAVE.key)!);
 legacy.version = SAVE.version - 1;
 missionStorage.setItem(SAVE.key, JSON.stringify(legacy));
@@ -44,15 +48,35 @@ assert.equal(loadedMission.snapshot.core.hp, 31);
 assert.deepEqual(loadedMission.snapshot.relays, snapshot.relays);
 assert.equal(loadedMission.snapshot.wallState?.walls.length, 1, 'older adjacent wall pieces are merged on resume');
 assert.deepEqual(loadedMission.pending, {coreDamage: 4, cellDamage: 8});
+// Rubble survives the reload with its rigid-body state intact.
+assert.equal(loadedMission.debris.length, 2);
+assert.deepEqual(loadedMission.debris[0], debris[0]);
+assert.deepEqual(loadedMission.debris[1], debris[1]);
 missionStore.clearMission();
 assert.equal(new SaveStore(missionStorage).data.mission, null);
 const { simulateShotWalls } = await import('../src/game/sim/wall-simulator');
 const input = { angleDeg: 26, power: 260, mode: 'arc' as const, ammoId: 'aphe-hybrid' };
 const first = simulateShotWalls(stage.def, {grid: stage.grid, wallState: stage.wallState, core: stage.core, relays: stage.relays}, input).result;
-missionStore.setMission({stageId: stage.def.id, snapshot: first.final, shotsUsed: 1, aim: input, pending: null});
+missionStore.setMission({stageId: stage.def.id, snapshot: first.final, shotsUsed: 1, aim: input, pending: null, debris: []});
 const resumed = new SaveStore(missionStorage).data.mission!;
 const uninterruptedNext = simulateShotWalls(stage.def, first.final, input).result;
 const resumedNext = simulateShotWalls(stage.def, resumed.snapshot, input).result;
 assert.deepEqual(resumedNext.final, uninterruptedNext.final, 'subsequent shots match the uninterrupted damaged mission');
+// Junk debris must never block a resume: it is dropped, the mission loads.
+const junkStorage = new StorageStub();
+const junkStore = new SaveStore(junkStorage);
+junkStore.setMission({ stageId: stage.def.id, snapshot, shotsUsed: 1, aim: { angleDeg: 31, power: 300, mode: 'arc', ammoId: 'aphe-hybrid' }, pending: null, debris });
+const rawJunk = JSON.parse(junkStorage.getItem(SAVE.key)!);
+rawJunk.mission.debris = [
+  { m: 'nonsense', p: [0, 0, 1, 1], x: 0, y: 0, vx: 0, vy: 0, a: 0, av: 0, h: 0, s: 0 },
+  { m: 'steel', p: [0, 0, 'x', 1], x: 0, y: 0, vx: 0, vy: 0, a: 0, av: 0, h: 0, s: 0 },
+  debris[0],
+];
+junkStorage.setItem(SAVE.key, JSON.stringify(rawJunk));
+const salvaged = new SaveStore(junkStorage).data.mission;
+assert.ok(salvaged, 'a mission with partly corrupt debris must still resume');
+assert.equal(salvaged.debris.length, 3, 'raw records are preserved for validation at load');
+const { deserializeDebris } = await import('../src/game/sim/debris-save');
+assert.equal(deserializeDebris(salvaged.debris).length, 1, 'only the valid debris record is restored');
 missionStore.clearMission();
-console.log('Mission checkpoint round-trip, migration and continued simulation passed');
+console.log('Mission checkpoint round-trip, rubble restore, migration and continued simulation passed');

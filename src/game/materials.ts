@@ -15,6 +15,19 @@ export interface MaterialDef {
   shortLabel: string;
   health: number;
   density: number;
+  /**
+   * Structural physics per material, used by the pixel fracture solver.
+   * strength  0..1  how much strain a cell link survives before it tears
+   * yield     0..1  strain at which deformation becomes permanent (plastic)
+   * sag       0..1  how far the material bends under heat plus gravity
+   * conduct   0..1  how quickly heat travels through the material
+   * soften    0..1  how much heat weakens the material (metal loses strength)
+   */
+  strength: number;
+  yieldStrain: number;
+  sag: number;
+  conduct: number;
+  soften: number;
   /** Colors are deliberately desaturated except for player-facing accents. */
   colors: {
     base: number;
@@ -40,6 +53,11 @@ export const MATERIALS: Record<MaterialId, MaterialDef> = {
     resistance: { kinetic: 1.15, jet: 0.55, blast: 1.35, crush: 1.4, spall: 1.25, heat: 1.25, shock: 1.05, tear: 1.35 },
     debris: 'splinter',
     isMetal: false,
+    strength: 0.42,
+    yieldStrain: 0.09,
+    sag: 0.35,
+    conduct: 0.06,
+    soften: 0.15,
   },
   brick: {
     id: 'brick',
@@ -51,6 +69,11 @@ export const MATERIALS: Record<MaterialId, MaterialDef> = {
     resistance: { kinetic: 1.05, jet: 0.6, blast: 1.2, crush: 1.15, spall: 1.05, heat: 1.0, shock: 1.15, tear: 0.9 },
     debris: 'rubble',
     isMetal: false,
+    strength: 0.5,
+    yieldStrain: 0.05,
+    sag: 0.12,
+    conduct: 0.12,
+    soften: 0.2,
   },
   concrete: {
     id: 'concrete',
@@ -62,6 +85,11 @@ export const MATERIALS: Record<MaterialId, MaterialDef> = {
     resistance: { kinetic: 0.95, jet: 0.72, blast: 1.0, crush: 0.95, spall: 0.9, heat: 0.8, shock: 1.0, tear: 0.7 },
     debris: 'chunk',
     isMetal: false,
+    strength: 0.62,
+    yieldStrain: 0.045,
+    sag: 0.1,
+    conduct: 0.22,
+    soften: 0.25,
   },
   steel: {
     id: 'steel',
@@ -73,6 +101,11 @@ export const MATERIALS: Record<MaterialId, MaterialDef> = {
     resistance: { kinetic: 0.78, jet: 1.0, blast: 0.74, crush: 0.66, spall: 0.8, heat: 1.08, shock: 0.86, tear: 0.62 },
     debris: 'spark',
     isMetal: true,
+    strength: 0.86,
+    yieldStrain: 0.032,
+    sag: 0.85,
+    conduct: 0.72,
+    soften: 0.8,
   },
   armor: {
     id: 'armor',
@@ -84,6 +117,11 @@ export const MATERIALS: Record<MaterialId, MaterialDef> = {
     resistance: { kinetic: 0.64, jet: 0.92, blast: 0.51, crush: 0.54, spall: 0.7, heat: 0.92, shock: 0.7, tear: 0.45 },
     debris: 'plate',
     isMetal: true,
+    strength: 0.95,
+    yieldStrain: 0.026,
+    sag: 0.6,
+    conduct: 0.65,
+    soften: 0.55,
   },
   slopes: {
     id: 'slopes',
@@ -95,6 +133,11 @@ export const MATERIALS: Record<MaterialId, MaterialDef> = {
     resistance: { kinetic: 0.88, jet: 0.72, blast: 0.96, crush: 0.9, spall: 0.9, heat: 0.8, shock: 0.9, tear: 0.6 },
     debris: 'chunk',
     isMetal: false,
+    strength: 0.7,
+    yieldStrain: 0.04,
+    sag: 0.14,
+    conduct: 0.2,
+    soften: 0.3,
   },
 };
 

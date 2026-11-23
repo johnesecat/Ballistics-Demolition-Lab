@@ -14,7 +14,13 @@ import { shotCameraFrame } from '../src/game/config';
 
 const flight = projectileCells(0);
 const flying = projectileBounds(flight);
-assert(flight.length > 300, `reference body needs detail, got ${flight.length} cells`);
+// The reference round is a blunt 2:1 shell, not the old finned dart: ~157 cells
+// in a 21x11 silhouette read off native 2554x1180 video frames.
+assert(flight.length > 120, `reference body needs detail, got ${flight.length} cells`);
+assert(flying.width / flying.height > 1.6 && flying.width / flying.height < 2.3, `reference proportions are ~1.9:1, got ${flying.width}x${flying.height}`);
+assert(flight.some((cell) => cell.part === 'orange'), 'the amber drive band must be part of the art');
+assert(flight.some((cell) => cell.part === 'red'), 'red flecks around the band must be part of the art');
+assert(!flight.some((cell) => (cell.part as string) === 'cyan'), 'the reference round has no cyan exhaust');
 assert(flying.width > flying.height, `in flight the dart points along X, got ${flying.width}x${flying.height}`);
 assert.equal(flight.filter((cell) => cell.part.startsWith('filler')).length, 0, 'filler stays inside an intact casing');
 assert(flight.every((cell) => Number.isInteger(cell.x) && Number.isInteger(cell.y)), 'every cell is snapped to whole pixels');
@@ -28,6 +34,44 @@ assert(crushedBounds.height > flying.height * 1.35, `squash must widen the body 
 assert(crushed.filter((cell) => cell.part.startsWith('filler')).length > 10, 'heavy squash exposes the yellow filler');
 assert.deepEqual(crushed, projectileCells(1, 0.5), 'deformation is deterministic');
 console.log(`projectile pixels: ${flight.length} cells ${flying.width}x${flying.height} -> ${crushed.length} cells ${crushedBounds.width}x${crushedBounds.height}`);
+
+// Real-time pixel physics: the shell is a mass lattice. On a hard face the nose
+// stops, the body piles up, volume is preserved by bulging sideways, and cells
+// tear off as shrapnel. Nothing is invented: the cell count never exceeds the
+// cast body, and the same inputs always produce the same pixels.
+const { ShellImpact } = await import('../src/game/sim/shell-pixels');
+const hitSteel = new ShellImpact({ speed: 640, mass: 9, material: 'steel', integrity: 0.65, seed: 991 });
+const atRest = { ...projectileBounds(hitSteel.cells()) };
+hitSteel.stepTo(0.22);
+const crushedDeep = hitSteel.cells();
+const deep = projectileBounds(crushedDeep);
+assert(deep.width < atRest.width * 0.75, `the crush must shorten the shell, ${deep.width} vs ${atRest.width}`);
+assert(deep.height > atRest.height * 1.3, `volume preservation must bulge the shell sideways, ${deep.height} vs ${atRest.height}`);
+assert(crushedDeep.length <= flight.length, 'the lattice never invents pixels to fake a bulge');
+const detachments = hitSteel.shrapnel().length;
+assert(detachments > 0, `impact must tear pixels off as shrapnel, got ${detachments}`);
+assert(hitSteel.pixels.every((cell) => Number.isFinite(cell.x) && Number.isFinite(cell.y)), 'deformed cells stay finite');
+const repeat = new ShellImpact({ speed: 640, mass: 9, material: 'steel', integrity: 0.65, seed: 991 });
+repeat.stepTo(0.22);
+assert.deepEqual(repeat.cells(), crushedDeep, 'pixel physics is deterministic for the same shot');
+assert.deepEqual(repeat.shrapnel().map((c) => [c.x, c.y]), hitSteel.shrapnel().map((c) => [c.x, c.y]), 'shrapnel is deterministic');
+
+// Mass and material change the outcome, not just the colour.
+const heavy = new ShellImpact({ speed: 640, mass: 22, material: 'steel', integrity: 0.65, seed: 991 });
+heavy.stepTo(0.22);
+const light = new ShellImpact({ speed: 640, mass: 4, material: 'steel', integrity: 0.65, seed: 991 });
+light.stepTo(0.22);
+assert(
+  projectileBounds(heavy.cells()).width > projectileBounds(light.cells()).width,
+  'a heavier shell resists the crush more than a light one',
+);
+const soft = new ShellImpact({ speed: 640, mass: 9, material: null, integrity: 0.65, seed: 991 });
+soft.stepTo(0.22);
+assert(
+  soft.shrapnel().length < detachments,
+  `a soft face must tear the casing less than steel (${soft.shrapnel().length} vs ${detachments})`,
+);
+console.log(`shell lattice: ${atRest.width}x${atRest.height} -> ${deep.width}x${deep.height}, ${detachments} shrapnel cells, deterministic`);
 
 const built = buildStage(ALL_STAGES[0]!);
 const snapshot = cloneSnapshot({ grid: built.grid, wallState: built.wallState, core: built.core, relays: built.relays });

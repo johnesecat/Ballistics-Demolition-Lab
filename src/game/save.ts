@@ -5,6 +5,7 @@ import type { AimState } from './BattleScene';
 import type { StageSnapshot } from './stages/types';
 import { cloneSnapshot } from './stages/types';
 import { deserializeWallState } from './sim/wall-simulator';
+import { deserializeDebris, type DebrisRecord } from './sim/debris-save';
 
 export type TrajectorySetting = 'full' | 'hidden';
 
@@ -15,6 +16,8 @@ export interface Settings {
   reducedEffects: boolean;
   trajectory: TrajectorySetting;
   aimSensitivity: number;
+  /** Thermal camera: the field is rendered by heat instead of by material. */
+  thermalVision: boolean;
 }
 
 export interface StageRecord {
@@ -30,6 +33,8 @@ export interface MissionSave {
   aim: AimState;
   /** A shot was already simulated when the page closed during its replay. */
   pending: { coreDamage: number; cellDamage: number } | null;
+  /** Rubble that had settled on the field, restored with the mission. */
+  debris: DebrisRecord[];
 }
 
 export interface SaveData {
@@ -58,6 +63,7 @@ export const DEFAULT_SETTINGS: Settings = {
   reducedEffects: false,
   trajectory: 'full',
   aimSensitivity: AIM.defaultSensitivity,
+  thermalVision: false,
 };
 
 function defaultData(): SaveData {
@@ -92,6 +98,7 @@ function cleanSettings(raw: unknown): Settings {
       AIM.sensitivityMin,
       AIM.sensitivityMax,
     ),
+    thermalVision: toBool(value.thermalVision, DEFAULT_SETTINGS.thermalVision),
   };
 }
 
@@ -131,7 +138,10 @@ function cleanMission(raw: unknown, migrateGeometry: boolean): MissionSave | nul
   try {
     const snapshot = raw.snapshot as unknown as StageSnapshot;
     if (snapshot.wallState) snapshot.wallState = deserializeWallState(JSON.stringify(snapshot.wallState), migrateGeometry);
-    return { stageId: raw.stageId, snapshot: cloneSnapshot(snapshot), shotsUsed: raw.shotsUsed as number, aim: { ...aim } as unknown as AimState, pending: pending == null ? null : { coreDamage: (pending as {coreDamage: number}).coreDamage, cellDamage: (pending as {cellDamage: number}).cellDamage } };
+    // Debris is restored only if it actually parses; a broken list falls back to
+    // an empty field rather than blocking the resume.
+    const debris = deserializeDebris(raw.debris).length > 0 ? (raw.debris as DebrisRecord[]) : [];
+    return { stageId: raw.stageId, snapshot: cloneSnapshot(snapshot), shotsUsed: raw.shotsUsed as number, aim: { ...aim } as unknown as AimState, pending: pending == null ? null : { coreDamage: (pending as {coreDamage: number}).coreDamage, cellDamage: (pending as {cellDamage: number}).cellDamage }, debris };
   } catch {
     return null;
   }
@@ -296,7 +306,13 @@ export class SaveStore {
   }
 
   setMission(mission: MissionSave): void {
-    this.data.mission = { ...mission, snapshot: cloneSnapshot(mission.snapshot), aim: { ...mission.aim }, pending: mission.pending ? { ...mission.pending } : null };
+    this.data.mission = {
+      ...mission,
+      snapshot: cloneSnapshot(mission.snapshot),
+      aim: { ...mission.aim },
+      pending: mission.pending ? { ...mission.pending } : null,
+      debris: mission.debris ? mission.debris.map((record) => ({ ...record, p: [...record.p] })) : [],
+    };
     this.save();
   }
 

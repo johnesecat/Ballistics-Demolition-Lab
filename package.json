@@ -1,10 +1,10 @@
 {
   "name": "breakwater-siege",
   "version": "1.0.0",
-  "description": "BREAKWATER — an original pixel-art artillery destruction game for iPhone 15 Safari.",
+  "description": "BREAKWATER \u2014 an original pixel-art artillery destruction game for iPhone 15 Safari.",
   "main": "index.js",
   "scripts": {
-    "test": "npm run test:walls && npm run test:fracture && npm run test:heat && npm run test:raster && npm run test:collision && npm run test:projectile && npm run test:save",
+    "test": "npm run test:walls && npm run test:fracture && npm run test:heat && npm run test:raster && npm run test:collision && npm run test:projectile && npm run test:save && npm run test:deform",
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0",
@@ -16,7 +16,8 @@
     "test:raster": "tsx scripts/test-pixel-runs.ts",
     "test:collision": "tsx scripts/test-collision.ts",
     "test:projectile": "tsx scripts/test-projectile.ts",
-    "test:save": "tsx scripts/test-save.ts"
+    "test:save": "tsx scripts/test-save.ts",
+    "test:deform": "tsx scripts/test-deform.ts"
   },
   "keywords": [],
   "author": "",

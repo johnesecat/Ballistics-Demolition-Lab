@@ -10,6 +10,7 @@ import { cloneSnapshot } from './stages/types';
 import type { ShotInput, ShotResult, PreviewResult, FireMode, DamageEvent, EffectEvent } from './sim/types';
 import { attachWallState, getWallState, simulateShotWalls } from './sim/wall-simulator';
 import { stepFragmentBodies, type FragmentBody } from './sim/fracture';
+import { deserializeDebris, serializeDebris, type DebrisRecord } from './sim/debris-save';
 import { coolHeat, type WallState } from './sim/walls';
 import { previewShot } from './sim/preview';
 import type { SoundName } from './audio';
@@ -516,7 +517,12 @@ export class BattleScene extends Phaser.Scene {
     this.callbacks.onReplayState?.({ phase: 'idle', speed: 1, elapsedMs: 0, durationMs: 0 });
   }
 
-  startMission(stage: BuiltStage, ammoId: string, settings: Settings, restored?: { snapshot: StageSnapshot; aim: AimState }): void {
+  startMission(
+    stage: BuiltStage,
+    ammoId: string,
+    settings: Settings,
+    restored?: { snapshot: StageSnapshot; aim: AimState; debris?: DebrisRecord[] },
+  ): void {
     this.settings = settings;
     this.tweens.resumeAll();
     this.tweens.timeScale = 1;
@@ -540,8 +546,10 @@ export class BattleScene extends Phaser.Scene {
     this.wallState = getWallState(this.runtime);
     attachWallState(this.runtime, this.wallState);
     this.viewWallState = this.wallState;
-    this.viewBodies = [];
-    this.fragmentBodies = [];
+    // Rubble that had settled before the reload comes back with the mission:
+    // the battlefield is restored, not just the damage numbers.
+    this.fragmentBodies = restored?.debris ? deserializeDebris(restored.debris) : [];
+    this.viewBodies = this.fragmentBodies;
     this.presentation = cloneSnapshot(this.runtime);
     this.zoomFactor = 1;
     this.layoutCamera(false);
@@ -550,6 +558,7 @@ export class BattleScene extends Phaser.Scene {
     this.focusWall = null;
     this.focusArmed = false;
     this.lastLodBucket = -1;
+    this.structure.setThermal(settings.thermalVision);
     this.structure.setWalls(this.wallState, this.fragmentBodies);
     this.core.setCore(this.runtime.core);
     this.relays.setRelays(this.runtime.relays);
@@ -557,6 +566,7 @@ export class BattleScene extends Phaser.Scene {
     this.core.setVisible(true);
     this.effects.setOptions(settings.reducedEffects, settings.cameraShake);
     this.demolition.setOptions(settings.reducedEffects);
+    this.structure.setThermal(settings.thermalVision);
     this.demolition.setWalls(this.wallState);
     this.mode = 'aiming';
     this.playback = null;
@@ -583,6 +593,7 @@ export class BattleScene extends Phaser.Scene {
     this.settings = settings;
     this.effects.setOptions(settings.reducedEffects, settings.cameraShake);
     this.demolition.setOptions(settings.reducedEffects);
+    this.structure.setThermal(settings.thermalVision);
     if (this.built) this.backdrop.setTheme(this.built.def.theme, settings.reducedEffects);
     this.previewDirty = true;
     if (this.mode === 'aiming') this.refreshPreview();
@@ -610,6 +621,11 @@ export class BattleScene extends Phaser.Scene {
 
   getRuntimeSnapshot(): StageSnapshot | null {
     return this.runtime ? cloneSnapshot(this.runtime) : null;
+  }
+
+  /** Settled rubble, for the mission checkpoint. */
+  getDebrisRecords(): DebrisRecord[] {
+    return serializeDebris(this.fragmentBodies);
   }
 
   getPendingShot(): Pick<ShotResult, 'final' | 'coreDamage' | 'cellDamage'> | null {
@@ -1126,6 +1142,7 @@ export class BattleScene extends Phaser.Scene {
           frame.angle,
           body,
           34 * (ammo.flight.spriteScale ?? 1) * frame.scale,
+          frame.shell ? { ...frame.shell, age: (playback.elapsed - frame.t) / 1000 } : undefined,
         );
         this.projectile.setVisible(false);
         return;
@@ -1144,7 +1161,14 @@ export class BattleScene extends Phaser.Scene {
     body.squash = squash;
     body.layers = layers;
     body.integrity = 1 - squash * 0.5;
-    this.projectileView.draw(x, y, angle, body, 34 * (ammo.flight.spriteScale ?? 1) * scale);
+    this.projectileView.draw(
+      x,
+      y,
+      angle,
+      body,
+      34 * (ammo.flight.spriteScale ?? 1) * scale,
+      current.shell ? { ...current.shell, age: 0 } : undefined,
+    );
     // The legacy texture sprite must stay hidden: drawing both produced the
     // doubled, wrong-looking bullet reported in the recordings review.
     this.projectile.setVisible(false);

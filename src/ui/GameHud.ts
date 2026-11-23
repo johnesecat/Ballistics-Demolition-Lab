@@ -21,6 +21,7 @@ export interface HudCallbacks {
   onReplaySkip: () => void;
   onReplaySpeed: (speed: number) => void;
   onLayout: (top: number, bottom: number) => void;
+  onToggleThermal: () => void;
 }
 
 /**
@@ -66,6 +67,7 @@ export class GameHud {
           <div class="hud-star-target" data-hud="star-target">${starsHtml(0)}</div>
         </div>
         <div class="hud-actions">
+          <button type="button" class="hud-icon-button" data-action="hud-thermal" aria-label="Toggle thermal vision" aria-pressed="false">THERMAL<br><span>VIEW</span></button>
           <button type="button" class="hud-icon-button" data-action="hud-reset" aria-label="Reset aim">RESET<br><span>AIM</span></button>
           <button type="button" class="hud-icon-button" data-action="hud-menu" aria-label="Pause and open menu">MENU</button>
         </div>
@@ -198,6 +200,9 @@ export class GameHud {
         break;
       case 'hud-menu':
         this.callbacks.onMenu();
+        break;
+      case 'hud-thermal':
+        this.callbacks.onToggleThermal();
         break;
       case 'open-ammo':
         this.callbacks.onOpenAmmo();
@@ -360,6 +365,14 @@ export class GameHud {
   private updateObjectiveTarget(): void {
     if (!this.built) return;
     this.updateObjective({ grid: this.built.grid, wallState: this.built.wallState, core: this.built.core, relays: this.built.relays });
+  }
+
+  /** Reflect the thermal camera state on its HUD button. */
+  setThermal(on: boolean): void {
+    const button = this.root.querySelector<HTMLElement>('[data-action="hud-thermal"]');
+    if (!button) return;
+    button.classList.toggle('is-active', on);
+    button.setAttribute('aria-pressed', on ? 'true' : 'false');
   }
 
   setPreview(preview: PreviewResult | null): void {

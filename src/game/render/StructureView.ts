@@ -5,6 +5,9 @@ import { materialHeatColor, type FragmentBody, type Polygon } from '../sim/fract
 import { materialAt, pointInPolygon, type WallState } from '../sim/walls';
 import { pixelRuns } from './pixel-raster';
 
+/** Cold body tones for the thermal camera (heat is painted on top). */
+const THERMAL_COLD = { base: 0x16224a, light: 0x1e2d5e, dark: 0x0c1330 };
+
 /**
  * Screen-pixel cube size. The recordings show crumble/heat as ~2-3 screen
  * pixels at any zoom — world size therefore shrinks as the camera zooms in.
@@ -48,6 +51,8 @@ export class StructureView {
   private lastWalls: WallState | null = null;
   private focusWall: string | null = null;
   private bodiesPainted = -1;
+  private thermal = false;
+  private thermalGlow: Phaser.GameObjects.Graphics;
 
   private scene: Phaser.Scene;
   constructor(scene: Phaser.Scene, depth = 6) {
@@ -65,11 +70,31 @@ export class StructureView {
     this.container = scene.add.container(0, 0).setDepth(depth);
     this.heatLayer = scene.add.graphics().setDepth(depth + 3);
     this.heatLayer.setBlendMode(Phaser.BlendModes.NORMAL);
+    // Emissive pass: hot pixels bloom instead of merely changing hue. Additive
+    // blending keeps the glow cheap (one extra quad per hot cell).
+    this.thermalGlow = scene.add.graphics().setDepth(depth + 4);
+    this.thermalGlow.setBlendMode(Phaser.BlendModes.ADD);
     // Thermal stain belongs to the wall face only, so it is clipped to the
     // surviving polygons: a bloom over a breach must not float in the air where
     // the geometry was blown away. The mask source holds the same wall shapes.
     this.heatMaskSource = scene.make.graphics({ x: 0, y: 0 }, false);
-    this.heatLayer.setMask(this.heatMaskSource.createGeometryMask());
+    const mask = this.heatMaskSource.createGeometryMask();
+    this.heatLayer.setMask(mask);
+    this.thermalGlow.setMask(this.heatMaskSource.createGeometryMask());
+  }
+
+  /** Thermal camera: whole field rendered by temperature, not by material. */
+  setThermal(on: boolean): void {
+    if (this.thermal === on) return;
+    this.thermal = on;
+    this.lastBakeKey = '';
+    this.bakeWalls();
+    this.thermalGlow.clear();
+    if (this.lastWalls) this.drawHeatField(this.lastWalls);
+  }
+
+  isThermal(): boolean {
+    return this.thermal;
   }
 
   /** World bounds of the structure, or null when nothing is standing. */
@@ -130,6 +155,7 @@ export class StructureView {
    */
   refreshHeat(state: WallState | null): void {
     this.heatLayer.clear();
+    this.thermalGlow.clear();
     if (state) this.drawHeatField(state);
   }
 
@@ -141,6 +167,7 @@ export class StructureView {
     // frame would add a full-screen GPU pass during exactly the busiest scene.
     if (this.wallKey(state) !== this.lastBakeKey) this.bakeWalls();
     this.heatLayer.clear();
+    this.thermalGlow.clear();
     if (state) this.drawHeatField(state);
     this.setBodies(bodies, true);
   }
@@ -213,17 +240,19 @@ export class StructureView {
       const focused = wall.id === this.focusWall;
       const g = focused ? detail : bake;
       const def = MATERIALS[wall.material];
+      // Thermal camera ignores material colour: every slab is a cold body until
+      // heat paints it. That is what makes the applied heat readable on wood,
+      // brick and steel with one scale.
+      const colors = this.thermal ? THERMAL_COLD : def.colors;
       for (const poly of wall.polygons) {
-        // Warping is baked, not just a live-focus flourish: a steel plate that
-        // peeled at impact stays peeled in every later view and replay. Edges
-        // are subdivided first so a long plate can actually curve instead of
-        // only moving its four far-away corners.
+        // The bend is already in the geometry (sim/wall-deform.ts), so the
+        // renderer just draws the polygons it is given: collision, support and
+        // pixels all agree about the deformed plate.
         const refined = refinePolygon(poly, 12);
-        const bent = def.isMetal ? this.bendPoly(refined, this.lastWalls, 1.6) : refined;
-        this.fillPixelPoly(g, bent, def.colors, focused ? focusCell : cell);
+        this.fillPixelPoly(g, refined, colors, focused ? focusCell : cell);
         mask.beginPath();
-        mask.moveTo(bent[0]!.x, bent[0]!.y);
-        for (let i = 1; i < bent.length; i += 1) mask.lineTo(bent[i]!.x, bent[i]!.y);
+        mask.moveTo(refined[0]!.x, refined[0]!.y);
+        for (let i = 1; i < refined.length; i += 1) mask.lineTo(refined[i]!.x, refined[i]!.y);
         mask.closePath();
         mask.fillPath();
       }
@@ -256,7 +285,11 @@ export class StructureView {
     if (bodies.length === 0) return;
     const px = pixelWorldSize(this.scene);
     for (const b of bodies) {
-      const col = b.heat >= 0.5 ? materialHeatColor(b.fragment.material, b.heat) : MATERIALS[b.fragment.material].colors.base;
+      const col = this.thermal
+        ? thermalTone(b.heat)
+        : b.heat >= 0.5
+          ? materialHeatColor(b.fragment.material, b.heat)
+          : MATERIALS[b.fragment.material].colors.base;
       g.fillStyle(col, b.sleeping ? 0.9 : 1);
       // Build larger pieces from square pixels: timber reads as a splinter,
       // concrete as a compact chunk, and other material as single chips.
@@ -344,39 +377,31 @@ export class StructureView {
     // so cells are clipped once by the GPU mask. No per-cell point-in-polygon
     // test runs here — the old duplicate pass doubled the cost and could
     // disagree with the mask at edges, printing a halo outside the wall.
+    const glow = this.thermalGlow;
+    glow.clear();
     for (const [key, cell] of field) {
       const gx = key % cols;
       const gy = Math.floor(key / cols);
       const px = minX + gx * step;
       const py = minY + gy * step;
-      hg.fillStyle(materialHeatColor(cell.material, cell.heat), 0.94);
-      hg.fillRect(px, py, step, step);
-    }
-  }
-
-  /** Displace a polygon's vertices away from hot blooms on the same wall. */
-  private bendPoly(poly: Polygon, state: WallState, strength = 1): Polygon {
-    if (state.heat.length === 0) return poly;
-    return poly.map((p) => {
-      let bloom: { x: number; y: number; radius: number; heat: number } | null = null;
-      for (const r of state.heat) {
-        if (r.material && !MATERIALS[r.material].isMetal) continue;
-        const d = Math.hypot(p.x - r.x, p.y - r.y);
-        if (d > r.radius) continue;
-        const h = r.heat * (1 - d / r.radius);
-        if (!bloom || h > bloom.heat) bloom = { x: r.x, y: r.y, radius: r.radius, heat: h };
+      if (this.thermal) {
+        // Thermal camera: the whole slab is temperature. Below the first band
+        // everything is cold body; above it the full blackbody ramp runs to
+        // white, which is what makes the applied heat visible at a glance.
+        hg.fillStyle(thermalTone(cell.heat), 0.96);
+        hg.fillRect(px, py, step, step);
+      } else {
+        hg.fillStyle(materialHeatColor(cell.material, cell.heat), 0.94);
+        hg.fillRect(px, py, step, step);
       }
-      if (!bloom || bloom.heat < 0.1) return { ...p };
-      const dx = p.x - bloom.x;
-      const dy = p.y - bloom.y;
-      const dist = Math.hypot(dx, dy);
-      const len = dist || 1;
-      // Scale with distance so the fold grows outward from the breach (A-82).
-      // Edge points far from the bloom still move a few pixels, which is what
-      // makes a long steel plate visibly bow instead of only its corners.
-      const push = Math.min(18, bloom.heat * 24 * (dist / bloom.radius)) * strength;
-      return { x: p.x + (dx / len) * push, y: p.y + (dy / len) * push };
-    });
+      // Emissive bloom: only genuinely hot pixels glow, and the glow is
+      // additive so it reads as light rather than as a brighter paint colour.
+      if (cell.heat > (this.thermal ? 0.3 : 0.62)) {
+        const strength = Math.min(1, (cell.heat - 0.3) * 1.5);
+        glow.fillStyle(thermalTone(Math.min(1, cell.heat + 0.1)), 0.05 + strength * 0.1);
+        glow.fillRect(px - step, py - step, step * 3, step * 3);
+      }
+    }
   }
 
   /**
@@ -407,6 +432,7 @@ export class StructureView {
     this.detail.setVisible(visible);
     this.bodyLayer.setVisible(visible);
     this.heatLayer.setVisible(visible);
+    this.thermalGlow.setVisible(visible);
   }
 }
 
@@ -433,4 +459,38 @@ export function shade(color: number, factor: number): number {
   const g = Math.min(255, Math.round(((color >> 8) & 0xff) * factor));
   const b = Math.min(255, Math.round((color & 0xff) * factor));
   return (r << 16) | (g << 8) | b;
+}
+
+/**
+ * Thermal-camera tone: cold navy body running through violet and magenta into
+ * red, orange, amber and finally white-hot. This is the same blackbody order as
+ * `heatColor`, but with a cold body instead of a neutral background, so a slab
+ * that has not been hit still reads as an object in the camera.
+ */
+export function thermalTone(heat: number): number {
+  const t = Math.max(0, Math.min(1, heat));
+  const stops: Array<[number, number]> = [
+    [0, 0x0b1030],
+    [0.12, 0x16224a],
+    [0.26, 0x2b2a72],
+    [0.4, 0x5a2a86],
+    [0.52, 0x8f2b6e],
+    [0.64, 0xc23a3a],
+    [0.76, 0xe86a20],
+    [0.88, 0xf2b02e],
+    [1, 0xfff6d8],
+  ];
+  for (let i = 1; i < stops.length; i += 1) {
+    const [at, color] = stops[i]!;
+    if (t > at) continue;
+    const [prevAt, prevColor] = stops[i - 1]!;
+    const f = (t - prevAt) / Math.max(1e-6, at - prevAt);
+    const mix = (shift: number): number => {
+      const a = (prevColor >> shift) & 0xff;
+      const b = (color >> shift) & 0xff;
+      return Math.round(a + (b - a) * f);
+    };
+    return (mix(16) << 16) | (mix(8) << 8) | mix(0);
+  }
+  return 0xfff6d8;
 }
