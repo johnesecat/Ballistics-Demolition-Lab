@@ -14,24 +14,51 @@ import { shotCameraFrame } from '../src/game/config';
 
 const flight = projectileCells(0);
 const flying = projectileBounds(flight);
-// The reference round is a blunt 2:1 shell, not the old finned dart: ~157 cells
-// in a 21x11 silhouette read off native 2554x1180 video frames.
-assert(flight.length > 120, `reference body needs detail, got ${flight.length} cells`);
-assert(flying.width / flying.height > 1.6 && flying.width / flying.height < 2.3, `reference proportions are ~1.9:1, got ${flying.width}x${flying.height}`);
-assert(flight.some((cell) => cell.part === 'orange'), 'the amber drive band must be part of the art');
-assert(flight.some((cell) => cell.part === 'red'), 'red flecks around the band must be part of the art');
+// The reference round is the AP Solid Shot: a long ogival shell about 3.8:1
+// with an amber driving band at the base, read off the newest frames
+// (native 2556x1179), not the old blunt APHE body or the earlier finned dart.
+assert(flight.length > 100, `reference body needs detail, got ${flight.length} cells`);
+assert(
+  flying.width / flying.height > 3.2 && flying.width / flying.height < 4.4,
+  `the shot is ~3.8:1, got ${flying.width}x${flying.height}`,
+);
+assert(flight.some((cell) => cell.part === 'orange' || cell.part === 'orangeLight'), 'the amber driving band must be part of the art');
 assert(!flight.some((cell) => (cell.part as string) === 'cyan'), 'the reference round has no cyan exhaust');
-assert(flying.width > flying.height, `in flight the dart points along X, got ${flying.width}x${flying.height}`);
+assert(flying.width > flying.height, `in flight the shot points along X, got ${flying.width}x${flying.height}`);
 assert.equal(flight.filter((cell) => cell.part.startsWith('filler')).length, 0, 'filler stays inside an intact casing');
+// The band sits at the base of the round, not mid-body: every band cell must be
+// behind the mid-point of the silhouette.
+const bandXs = flight.filter((cell) => cell.part.startsWith('orange')).map((cell) => cell.x);
+assert(bandXs.length > 0, 'the driving band is drawn');
+const minX = Math.min(...flight.map((cell) => cell.x));
+const maxX = Math.max(...flight.map((cell) => cell.x));
+assert(
+  Math.max(...bandXs) < minX + (maxX - minX) * 0.35,
+  `the band belongs at the base, band ends at ${Math.max(...bandXs)} of ${minX}..${maxX}`,
+);
+// The nose is a fine point, not a squared-off block: the extreme forward cell
+// is a single cell wide.
+const noseColumn = flight.filter((cell) => cell.x === maxX);
+assert.equal(noseColumn.length, 1, 'the nose tapers to a single cell');
 assert(flight.every((cell) => Number.isInteger(cell.x) && Number.isInteger(cell.y)), 'every cell is snapped to whole pixels');
 assert.equal(new Set(flight.map((cell) => `${cell.x}|${cell.y}`)).size, flight.length, 'no duplicate cells');
 
 const crushed = projectileCells(1, 0.5);
 const crushedBounds = projectileBounds(crushed);
-assert(crushedBounds.height > crushedBounds.width, `squash must pancake the body, got ${crushedBounds.width}x${crushedBounds.height}`);
-assert(crushedBounds.width < flying.width * 0.75, `squash must shorten the body (${crushedBounds.width} vs ${flying.width})`);
-assert(crushedBounds.height > flying.height * 1.35, `squash must widen the body (${crushedBounds.height} vs ${flying.height})`);
-assert(crushed.filter((cell) => cell.part.startsWith('filler')).length > 10, 'heavy squash exposes the yellow filler');
+// The shot is a long 3.8:1 body, so a full squash shortens it hard and fattens
+// it hard: the check is the exchange of the two, not that the result is taller
+// than it is long (a 23-cell body cannot become taller than it is long without
+// inventing volume).
+assert(crushedBounds.width < flying.width * 0.7, `squash must shorten the body (${crushedBounds.width} vs ${flying.width})`);
+assert(crushedBounds.height > flying.height * 1.4, `squash must widen the body (${crushedBounds.height} vs ${flying.height})`);
+assert(
+  crushedBounds.height / crushedBounds.width > 0.6,
+  `a crushed 3.8:1 shot must read as a pancake, got ${crushedBounds.width}x${crushedBounds.height}`,
+);
+assert(
+  crushed.filter((cell) => cell.part.startsWith('filler') || cell.part === 'steel').length > 10,
+  'heavy squash opens the casing and exposes the core',
+);
 assert.deepEqual(crushed, projectileCells(1, 0.5), 'deformation is deterministic');
 console.log(`projectile pixels: ${flight.length} cells ${flying.width}x${flying.height} -> ${crushed.length} cells ${crushedBounds.width}x${crushedBounds.height}`);
 
@@ -65,12 +92,41 @@ assert(
   projectileBounds(heavy.cells()).width > projectileBounds(light.cells()).width,
   'a heavier shell resists the crush more than a light one',
 );
+// Compare over the whole wreck, not one frame: a hard face tears the casing
+// open at once, so by the time the body settles it has shed more of itself.
+const settledSteel = new ShellImpact({ speed: 640, mass: 9, material: 'steel', integrity: 0.65, seed: 991 });
+settledSteel.stepTo(0.7);
 const soft = new ShellImpact({ speed: 640, mass: 9, material: null, integrity: 0.65, seed: 991 });
-soft.stepTo(0.22);
+soft.stepTo(0.7);
 assert(
-  soft.shrapnel().length < detachments,
-  `a soft face must tear the casing less than steel (${soft.shrapnel().length} vs ${detachments})`,
+  soft.shrapnel().length < settledSteel.shrapnel().length,
+  `a soft face must tear the casing less than steel (${soft.shrapnel().length} vs ${settledSteel.shrapnel().length})`,
 );
+
+// Face hardness and carried crumple are live inputs, not decoration: the same
+// shot against a harder face crushes deeper and sheds more, and a crumpled
+// casing folds wider than a pristine one.
+const softFace = new ShellImpact({ speed: 640, mass: 9, material: 'steel', integrity: 0.65, seed: 991, hardness: 0.2, crumple: 0.3 });
+softFace.stepTo(0.22);
+const hardFace = new ShellImpact({ speed: 640, mass: 9, material: 'steel', integrity: 0.65, seed: 991, hardness: 0.9, crumple: 0.3 });
+hardFace.stepTo(0.22);
+const softFaceBounds = projectileBounds(softFace.cells());
+const hardFaceBounds = projectileBounds(hardFace.cells());
+assert(
+  hardFaceBounds.width < softFaceBounds.width,
+  `a harder face must crush the body shorter (${hardFaceBounds.width} vs ${softFaceBounds.width})`,
+);
+assert(
+  hardFace.shrapnel().length > softFace.shrapnel().length,
+  `a harder face must tear off more casing (${hardFace.shrapnel().length} vs ${softFace.shrapnel().length})`,
+);
+const spreadOf = (crumple: number): number => {
+  const hit = new ShellImpact({ speed: 640, mass: 9, material: 'steel', integrity: 0.65, seed: 991, hardness: 0.5, crumple });
+  hit.stepTo(0.22);
+  const ys = hit.cells().map((cell) => cell.y);
+  return Math.max(...ys) - Math.min(...ys);
+};
+assert(spreadOf(1) > spreadOf(0), `a crumpled casing must fold wider (${spreadOf(1)} vs ${spreadOf(0)})`);
 console.log(`shell lattice: ${atRest.width}x${atRest.height} -> ${deep.width}x${deep.height}, ${detachments} shrapnel cells, deterministic`);
 
 const built = buildStage(ALL_STAGES[0]!);

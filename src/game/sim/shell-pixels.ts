@@ -67,6 +67,19 @@ export interface ShellImpactInput {
   /** 1 = intact casing, 0 = spent. */
   integrity: number;
   seed: number;
+  /**
+   * Face hardness 0..1 from the shot solver. A harder face stops the nose in
+   * less distance, so the casing sees a higher peak strain: it crushes faster,
+   * its links break sooner, and it spalls more. This is the same number the
+   * frame state carries, so the value is honoured, not stored and ignored.
+   */
+  hardness: number;
+  /**
+   * Buckling propensity 0..1 from the shot solver. A shell that is already
+   * mangled by earlier layers folds asymmetrically instead of shearing, and
+   * sheds its surface cells with a wider sideways throw.
+   */
+  crumple: number;
 }
 
 const CELL_DT = 1 / 240;
@@ -100,6 +113,8 @@ export class ShellImpact {
   private readonly contacts: number[] = [];
   private readonly breakScale: number;
   private readonly stiffnessScale: number;
+  private readonly hardness: number;
+  private readonly crumple: number;
   /** Damage a surface cell needs before it spalls off (soft faces shed less). */
   private readonly spallThreshold: number;
 
@@ -113,13 +128,23 @@ export class ShellImpact {
       conduct: material?.conduct ?? 0.2,
       soften: material?.soften ?? 0.3,
     };
-    this.velocity = crushVelocity(input.speed, input.mass);
-    const { breakScale, stiffness } = distanceScale(input.material);
-    this.breakScale = breakScale * (0.6 + input.integrity * 0.55);
-    this.stiffnessScale = stiffness;
+    const hardness = Math.max(0, Math.min(1, Number.isFinite(input.hardness) ? input.hardness : 0.5));
+    const crumple = Math.max(0, Math.min(1, Number.isFinite(input.crumple) ? input.crumple : 0));
+    this.hardness = hardness;
+    this.crumple = crumple;
+    this.velocity = crushVelocity(input.speed, input.mass) * (0.78 + 0.44 * hardness);
+    const { stiffness } = distanceScale(input.material);
+    // Harder face: the same momentum is spent over a shorter stroke, so the
+    // casing sees a higher peak strain. The links tolerate less stretch, reach
+    // their damage budget sooner and the shell tears open instead of resting
+    // against the face intact. (Tying this to the face's material strength
+    // instead -- the old behaviour -- made steel the gentlest face of all,
+    // which is the opposite of what a ductile casing does against armour.)
+    this.breakScale = (0.26 - 0.1 * hardness) * (0.6 + input.integrity * 0.55);
+    this.stiffnessScale = stiffness * (0.85 + 0.3 * hardness);
     // A soft face spreads the load instead of concentrating it, so the casing
-    // sheds fewer chips into soil than into a plate.
-    this.spallThreshold = 0.5 + (1 - this.material.strength) * 0.45;
+    // sheds fewer chips into soil than into a plate; a hard face sheds more.
+    this.spallThreshold = Math.max(0.2, 0.5 + (1 - this.material.strength) * 0.45 - 0.12 * hardness);
 
     const index = new Map<string, number>();
     SHELL_BASE.forEach((cell, i) => {
@@ -141,13 +166,16 @@ export class ShellImpact {
       index.set(`${cell.x}|${cell.y}`, i);
     });
 
-    // Seeded imperfection: a perfectly regular lattice buckles symmetrically,
-    // which looks synthetic. A sub-pixel bias per cell gives the crush the
-    // irregular, hand-drawn collapse of the reference footage.
+    // Seeded imperfection, carried by mass rather than by position: a
+    // perfectly uniform lattice buckles symmetrically, which looks synthetic,
+    // but nudging the starting positions would literally break the silhouette
+    // (two cells round to the same pixel and a hole opens in the in-flight
+    // sprite). Varying each cell's mass instead keeps the untouched round
+    // pixel-exact while still giving the crush an irregular collapse. Crumple
+    // widens that spread: a mangled casing folds the way it was already bent.
+    const spread = 0.1 * (0.6 + 1.6 * crumple);
     for (const pixel of this.pixels) {
-      const bias = (noise2(pixel.bx, pixel.by, input.seed % 100000) - 0.5) * 0.035;
-      pixel.x += bias;
-      pixel.y += bias * 0.6;
+      pixel.mass *= 1 + (noise2(pixel.bx, pixel.by, input.seed % 100000) - 0.5) * spread;
     }
 
     // Axial, shear and bending springs. Only the 4-neighbourhood carries the
@@ -164,7 +192,9 @@ export class ShellImpact {
           a: here,
           b: other,
           rest,
-          stiffness: axial ? 1 : 0.34,
+          // Crumple softens the shear links, so a mangled casing buckles and
+          // folds instead of shearing off in one plane.
+          stiffness: axial ? 1 : 0.34 * (1 - 0.45 * crumple),
           breakStrain: (axial ? this.breakScale : this.breakScale * 1.9) * (this.material.strength > 0.7 ? 1 : 0.85),
           damage: 0,
           broken: false,
@@ -340,7 +370,11 @@ export class ShellImpact {
     // holding it to the body any more, so it tears off with the motion it had --
     // the classic spall pattern of a hard hit on a ductile casing. The body can
     // never shed more than 45% of itself, so a shell stays readable.
-    let budget = Math.floor(px.length * 0.45) - px.filter((cell) => cell.free).length;
+    // The budget is a material property, not a constant: a hard face spalls a
+    // ductile casing far more than soil does, which is what makes the same
+    // round look different against steel and against the seabed.
+    const spallBudget = Math.min(0.45, 0.1 + 0.45 * this.material.strength + 0.1 * this.hardness);
+    let budget = Math.floor(px.length * spallBudget) - px.filter((cell) => cell.free).length;
     for (let i = 0; i < px.length && budget > 0; i += 1) {
       const cell = px[i]!;
       if (cell.free) continue;
@@ -350,7 +384,10 @@ export class ShellImpact {
       if (adjacency[i]!.length > 5) continue;
       cell.free = true;
       cell.vx += 26 + cell.heat * 30;
-      cell.vy += (noise2(cell.bx, cell.by, this.input.seed) - 0.5) * 44 + cell.heat * 12;
+      // A crumpled casing throws its spall sideways as well as forward, with
+      // the throw direction following the seeded fold of that cell.
+      cell.vy += (noise2(cell.bx, cell.by, this.input.seed) - 0.5) * 44 * (0.7 + 0.8 * this.crumple) + cell.heat * 12;
+      cell.vy += (noise2(cell.by, cell.bx, this.input.seed + 7) - 0.5) * this.crumple * 36;
       budget -= 1;
     }
     // Anchor: the rearmost intact cluster is the body core.
@@ -370,7 +407,11 @@ export class ShellImpact {
           stack.push(next);
         }
       }
-      if (cluster.length <= 2) {
+      // A hard face shakes small clusters loose; a soft one holds them in the
+      // soil. Only single cells come off a soft impact, which is why the same
+      // round sheds fewer chips into the seabed than into a plate.
+      const orphanLimit = this.material.strength >= 0.55 ? 1 + Math.floor(this.material.strength * 3) : 1;
+      if (cluster.length <= orphanLimit) {
         for (const i of cluster) px[i]!.free = true;
       } else {
         roots.push(cluster.length);
@@ -384,20 +425,19 @@ export class ShellImpact {
     return this.pixels.filter((cell) => cell.free);
   }
 
-  /** Rendered silhouette: whole cells, deduplicated, snapped to the grid. */
+  /**
+   * Rendered silhouette: every cell snapped to its whole pixel. Cells that
+   * round onto the same pixel are kept rather than dropped: dropping one would
+   * open a one-pixel hole in the body while it is being crushed, and a
+   * duplicate draw is free.
+   */
   cells(): ShellCell[] {
-    const seen = new Set<string>();
     const out: ShellCell[] = [];
     for (const cell of this.pixels) {
-      const x = Math.round(cell.x);
-      const y = Math.round(cell.y);
-      const key = `${x}|${y}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
       const exposed = cell.reveal > 0 && cell.damage > 0.12;
       out.push({
-        x,
-        y,
+        x: Math.round(cell.x),
+        y: Math.round(cell.y),
         part: cell.reveal > 0 && !exposed ? 'body' : cell.part,
         reveal: cell.reveal,
       });

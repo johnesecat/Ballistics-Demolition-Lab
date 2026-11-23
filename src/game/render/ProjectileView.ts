@@ -84,7 +84,7 @@ export class ProjectileView {
       return;
     }
 
-    const key = `${shell.seed}|${shell.mass}|${shell.integrity}|${shell.material ?? 'none'}|${Math.round(shell.speed)}`;
+    const key = `${shell.seed}|${shell.mass}|${shell.integrity}|${shell.material ?? 'none'}|${Math.round(shell.speed)}|${Math.round(shell.hardness * 100)}|${Math.round(shell.crumple * 100)}`;
     if (!this.sim || key !== this.simKey) {
       this.sim = new ShellImpact({
         speed: shell.speed,
@@ -92,6 +92,8 @@ export class ProjectileView {
         material: shell.material ?? null,
         integrity: shell.integrity,
         seed: shell.seed,
+        hardness: shell.hardness,
+        crumple: shell.crumple,
       });
       this.simKey = key;
       this.simAge = 0;

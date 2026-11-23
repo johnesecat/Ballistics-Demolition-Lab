@@ -21,6 +21,15 @@ import type { WallHeatRegion, WallState } from './walls';
 
 const MAX_STRIPS = 14;
 const MAX_BEND = 26;
+/**
+ * Hard cap on the vertices of one wall polygon, above all for torn rims.
+ * A bore needs vertices only around its lip; a tenth bore through the same
+ * plate reuses the vertices the first bore already paid for and displaces
+ * them, so geometry stays bounded on a long mission (iPhone frame cost is
+ * driven by polygon count, not by how many holes a plate has taken).
+ */
+export const MAX_RIM_VERTICES = 48;
+const MAX_POLYGONS_PER_WALL = 48;
 
 interface Strip {
   poly: Polygon;
@@ -132,8 +141,10 @@ export function deformHeatedWalls(state: WallState, options: { maxShift?: number
     const polygons: Polygon[] = [];
     // A wall that has already been split for its bend keeps its pieces; further
     // deformation displaces them instead of re-splitting, so the polygon count
-    // stays bounded over a five-shot mission.
-    const saturated = wall.polygons.length >= 36;
+    // stays bounded over a five-shot mission. Saturation is judged on the
+    // whole wall, not one polygon: a plate split into 14 strips must not let
+    // every strip split again on the next shot.
+    const saturated = wall.polygons.length >= MAX_STRIPS || polygons.length + wall.polygons.length > MAX_POLYGONS_PER_WALL;
     for (const poly of wall.polygons) {
       // Cold geometry is left byte-identical. Only the hot region is split, so
       // bending cannot quietly change the support graph of a wall it never
@@ -143,11 +154,11 @@ export function deformHeatedWalls(state: WallState, options: { maxShift?: number
         polygons.push(poly);
         continue;
       }
-      const pieces = saturated ? [{ poly: poly.map((p) => ({ ...p })), t: 0.5, nx: 0, ny: -1 }] : strips(poly);
-      if (pieces.length === 1) {
-        polygons.push(pieces[0]!.poly);
-        continue;
-      }
+      // Even a saturated or unsplittable piece still bows: it moves as one
+      // rigid strip, so a small plate is not exempt from warping.
+      const pieces = saturated || polygons.length + wall.polygons.length >= MAX_POLYGONS_PER_WALL
+        ? [{ poly: poly.map((p) => ({ ...p })), t: 0.5, nx: 0, ny: -1 }]
+        : strips(poly);
       for (const piece of pieces) {
         const centre = piece.poly.reduce((s, p) => ({ x: s.x + p.x / piece.poly.length, y: s.y + p.y / piece.poly.length }), { x: 0, y: 0 });
         const bloom = hottestBloom(state, centre.x, centre.y);
@@ -221,24 +232,50 @@ export function tearRim(
       polygons: wall.polygons.map((poly) => {
         const centre = poly.reduce((s, p) => ({ x: s.x + p.x / poly.length, y: s.y + p.y / poly.length }), { x: 0, y: 0 });
         if (Math.hypot(centre.x - at.x, centre.y - at.y) > radius * 8) return poly;
-        // Subdivide the edges around the hole first. A torn lip is a curve: two
-        // far-away corners cannot express it, so the outline gains vertices
-        // exactly where the tear happens and nowhere else.
-        const step = Math.max(2.2, radius * 0.6);
-        const dense: Polygon = [];
-        for (let i = 0; i < poly.length; i += 1) {
-          const a = poly[i]!;
-          const b = poly[(i + 1) % poly.length]!;
-          const parts = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / step));
-          for (let s = 0; s < parts; s += 1) {
-            const t = s / parts;
-            dense.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+        // A torn lip is a curve: two far-away corners cannot express it, so the
+        // outline gains vertices exactly where the tear happens. Only edges
+        // that pass near the channel are subdivided (the rest of the plate
+        // keeps its exact vertices), and the total is hard-capped: if the
+        // polygon already carries MAX_RIM_VERTICES vertices, or a subdivision
+        // step would take it past the cap, no new vertices are added at all --
+        // the existing lip vertices are simply displaced again. Repeated bores
+        // therefore cannot grow the polygon without bound.
+        const lip = radius * 1.8;
+        const nearLip = (a: { x: number; y: number }, b: { x: number; y: number }): boolean => {
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const len2 = dx * dx + dy * dy || 1e-9;
+          const t = Math.max(0, Math.min(1, ((at.x - a.x) * dx + (at.y - a.y) * dy) / len2));
+          return Math.hypot(a.x + dx * t - at.x, a.y + dy * t - at.y) <= lip;
+        };
+        let step = Math.max(2.2, radius * 0.6);
+        const countAt = (s: number): number => {
+          let count = 0;
+          for (let i = 0; i < poly.length; i += 1) {
+            const a = poly[i]!;
+            const b = poly[(i + 1) % poly.length]!;
+            count += nearLip(a, b) ? Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / s)) : 1;
           }
+          return count;
+        };
+        while (countAt(step) > MAX_RIM_VERTICES && step < 512) step *= 1.5;
+        const dense: Polygon = [];
+        if (poly.length < MAX_RIM_VERTICES) {
+          for (let i = 0; i < poly.length; i += 1) {
+            const a = poly[i]!;
+            const b = poly[(i + 1) % poly.length]!;
+            const parts = nearLip(a, b) ? Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / step)) : 1;
+            for (let s = 0; s < parts; s += 1) {
+              const t = s / parts;
+              dense.push({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
+            }
+          }
+        } else {
+          dense.push(...poly.map((p) => ({ ...p })));
         }
         // Only the lip around the hole moves. Points well away from the channel
         // keep their place, so opening a bore enlarges the hole instead of
         // growing the whole plate (which would silently add cover).
-        const lip = radius * 1.8;
         return dense.map((point) => {
           const d = Math.hypot(point.x - at.x, point.y - at.y);
           if (d > lip) return point;

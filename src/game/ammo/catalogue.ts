@@ -1082,7 +1082,7 @@ function crustPhase(): AmmoPhase {
 
 export const AMMO_BY_ID: ReadonlyMap<string, AmmoDef> = new Map(AMMO.map((item) => [item.id, item]));
 export const AMMO_NAMES: readonly string[] = AMMO.map((item) => item.name);
-export const STARTER_AMMO_ID = 'aphe-hybrid';
+export const STARTER_AMMO_ID = 'ap-solid-shot';
 
 export function getAmmo(id: string): AmmoDef {
   const found = AMMO_BY_ID.get(id);

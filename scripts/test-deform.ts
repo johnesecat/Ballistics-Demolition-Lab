@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { deformHeatedWalls, tearRim } from '../src/game/sim/wall-deform';
+import { MAX_RIM_VERTICES, deformHeatedWalls, tearRim } from '../src/game/sim/wall-deform';
 import { cloneWallState, detachUnsupported, type WallState } from '../src/game/sim/walls';
 import { traceWalls, type Wall } from '../src/game/sim/fracture';
 import { simulateShotWalls } from '../src/game/sim/wall-simulator';
@@ -97,13 +97,62 @@ const hanging: WallState = {
 const unsupported = detachUnsupported(hanging.walls, hanging.groundY);
 assert.equal(unsupported.detached.length, 1, 'an unanchored floating plate has no support');
 
-// Tear rim: a bore opens the surviving metal around the channel.
-const rimmed = tearRim([plate], { x: 730, y: 265 }, 6, 'steel', 400);
+// Tear rim: a bore opens the surviving metal around the channel. The survivor
+// here is what the fracture pass actually leaves behind -- a plate with the
+// channel already notched out of it -- because that is the lip that peels.
+const survivor: Wall = {
+  id: 'survivor',
+  material: 'steel',
+  polygons: [
+    [
+      { x: 700, y: 200 },
+      { x: 760, y: 200 },
+      { x: 760, y: 240 },
+      { x: 736, y: 240 },
+      { x: 736, y: 290 },
+      { x: 760, y: 290 },
+      { x: 760, y: 330 },
+      { x: 700, y: 330 },
+    ],
+  ],
+};
+const channel = { x: 730, y: 265 };
+const rimmed = tearRim([survivor], channel, 8, 'steel', 520);
 const rimPoly = rimmed[0]!.polygons[0]!;
-const source = plate.polygons[0]!;
-const rimMoved = rimPoly.some((point, i) => Math.hypot(point.x - source[i]!.x, point.y - source[i]!.y) > 0.4);
-assert(rimMoved, 'the rim of a bore is peeled outward');
-assert.deepEqual(tearRim([plate], { x: 730, y: 265 }, 6, 'brick', 400), [plate], 'brick rims do not peel');
+assert(rimPoly.length > survivor.polygons[0]!.length, 'the lip around the bore gains vertices');
+const inward = (point: { x: number; y: number }): number => Math.hypot(point.x - channel.x, point.y - channel.y);
+const lipBefore = survivor.polygons[0]!.filter((p) => inward(p) < 30).map(inward);
+const lipAfter = rimPoly.filter((p) => inward(p) < 40).map(inward);
+assert(
+  Math.max(...lipAfter) > Math.max(...lipBefore) + 0.5,
+  'the lip is pushed away from the channel (the hole opens)',
+);
+const brickPlate = { ...survivor, material: 'brick' as const };
+assert.deepEqual(tearRim([brickPlate], channel, 8, 'brick', 520), [brickPlate], 'brick rims do not peel');
+
+// A long mission hits the same plate again and again. Each bore may add a lip,
+// but the vertex budget is hard: the twelfth bore through the same plate costs
+// no more geometry than the third, which is what keeps an iPhone frame budget
+// stable over a five-shot mission.
+const density = (walls: Wall[]): number => walls.reduce((sum, wall) => sum + wall.polygons.reduce((n, poly) => n + poly.length, 0), 0);
+let bored = [plate];
+const growth: number[] = [];
+for (let i = 0; i < 12; i += 1) {
+  bored = tearRim(bored, { x: 706 + (i % 4) * 14, y: 216 + Math.floor(i / 4) * 40 }, 5, 'steel', 520);
+  growth.push(density(bored));
+}
+const capped = Math.max(...bored.flatMap((wall) => wall.polygons.map((poly) => poly.length)));
+assert(
+  capped <= MAX_RIM_VERTICES,
+  `a polygon may not exceed ${MAX_RIM_VERTICES} vertices, got ${capped} after 12 bores`,
+);
+// Once the lip has its vertices, further bores reuse them: the last third of
+// the bores must not add a single vertex.
+assert(
+  new Set(growth.slice(7)).size === 1,
+  `repeated bores must stop growing the outline (bores 3..12: ${growth.slice(2).join(', ')})`,
+);
+assert(growth[11]! < density([plate]) * 12, `twelve bores stay bounded, got ${growth[11]} vertices`);
 
 // End to end: a real shot leaves bent, heat-deformed steel behind, and the
 // result is reproducible.

@@ -33,7 +33,7 @@ export class GameHud {
   private callbacks: HudCallbacks;
   private stage: StageDefinition | null = null;
   private built: BuiltStage | null = null;
-  private ammo: AmmoDef = getAmmo('aphe-hybrid');
+  private ammo: AmmoDef = getAmmo('ap-solid-shot');
   private angle = 42;
   private power = 330;
   private mode: FireMode = 'arc';

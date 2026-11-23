@@ -8,11 +8,12 @@ import {
 } from '../sim/projectile-shell';
 
 /**
- * Reference projectile sprite, rebuilt from the 11-18 footage: a blunt pale
- * blue-grey shell with a narrow boat-tail, an amber drive band in the rear
- * third, red flecks sprayed around that band, and a stepped forward shoulder
- * ending in a blunt nose. There are no fins sticking out and no cyan exhaust;
- * the trail is pale dashes.
+ * Reference projectile sprite: the AP Solid Shot, rebuilt from the three newest
+ * frames. In flight it is a long ogival shell about 3.8 : 1 -- pale blue-grey
+ * with a light upper facet, a dark belly, a rivet on the flank, a fine bright
+ * tip and an amber driving band at the base -- and the x-ray frame shows a
+ * solid steel core filling the jacket, which is why the interior lattice cells
+ * are `steel` and only appear once the casing tears.
  *
  * Deformation is solved by the mass lattice in `sim/projectile-shell.ts`, so a
  * cell that tears off carries its own mass and leaves a gap. Everything is

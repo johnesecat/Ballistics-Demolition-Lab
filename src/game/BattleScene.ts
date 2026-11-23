@@ -102,7 +102,7 @@ export class BattleScene extends Phaser.Scene {
     angleDeg: AIM.defaultDeg,
     power: POWER.default,
     mode: 'arc',
-    ammoId: 'aphe-hybrid',
+    ammoId: 'ap-solid-shot',
   };
   private mode: 'ambient' | 'aiming' | 'playing' = 'ambient';
   private playback: Playback | null = null;
@@ -186,7 +186,7 @@ export class BattleScene extends Phaser.Scene {
     this.previewGraphics = this.add.graphics().setDepth(17);
     this.trailGraphics = this.add.graphics().setDepth(19);
     this.aimGuide = this.add.graphics().setDepth(16);
-    this.projectile = this.add.image(0, 0, 'round-aphe-hybrid').setDepth(20).setVisible(false);
+    this.projectile = this.add.image(0, 0, 'round-ap-solid-shot').setDepth(20).setVisible(false);
     this.projectileView = new ProjectileView(this, 20);
     this.effects = new EffectDirector(this, this.core, this.relays, (name) => this.callbacks.onSound?.(name));
     this.demolition = new DemolitionDirector(this);

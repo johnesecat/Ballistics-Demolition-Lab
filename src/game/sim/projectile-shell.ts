@@ -1,13 +1,17 @@
 import { hash32, noise2 } from '../rng';
 
 /**
- * Reference projectile shell (11-18 footage, read off native 2554x1180 frames).
+ * Reference projectile: the AP Solid Shot, read off the three newest frames
+ * (native 2556x1179).
  *
- * The round in the recording is NOT a thin dart: it is a blunt, forward-heavy
- * shell about 1.9 : 1 long, pale blue-grey with a light upper facet, a dark
- * belly, a narrow boat-tail and an amber drive band in the rear third with
- * red-orange flecks sprayed around it. The nose is a blunt stepped block, not a
- * white needle tip, and there is no cyan exhaust: the trail is pale dashes.
+ * In flight it is a long ogival shell, roughly 4 : 1, pale blue-grey with a
+ * light upper facet, a dark belly, a single dark square rivet on the flank
+ * and a small bright tip; an amber driving band sits at the very base, not
+ * mid-body. The x-ray frame shows what is inside that jacket: a solid steel
+ * core, a pointed dart filling most of the shell's length, which is why the
+ * interior cells of this lattice are `steel` and stay hidden until the
+ * casing above them tears open. There is no cyan exhaust: the trail is a
+ * thin pale line.
  *
  * The shell is modelled as a lattice of square cells. Every cell carries a mass
  * (area x casing density), so a crumple solves as a mass problem: light cells
@@ -40,19 +44,14 @@ export interface ShellCell {
   reveal: number;
 }
 
-/** Base art: 20 cells long, 10 tall. Rows run y = -5 (top) .. 4 (bottom). */
+/** Base art: 24 cells long, 6 tall. Rows run y = -3 (top) .. 2 (bottom). */
 const ART: readonly string[] = [
-  '..........KLLKK......', //
-  '.......KLKLLLLBKK....', //
-  '.....KLLLLLLLLLBBK...', //
-  '....KLGgLLLLLLBBBBK..', //
-  'KK..KLGgBBBBBBBBBBKK.', //
-  'KBBKLGgBBBBFFBBBBBBDK', //
-  '.BBKLGgBBBBFFBBBBBDDK', //
-  '..KKLGgBBBBBBBBBDDDK.', //
-  '...KKGGGBBBBBBBDDDK..', //
-  '.....KKDDDDDDDDKK....', //
-  '.......KKKKKKKK......', //
+  '.....LLLLLLLLLLLLLL.......', // y = -3
+  '...ggBBBDBBBBBBBBBBBB.....', // y = -2
+  '.DSGGBBBBBBBBBBBBBBBBBW...', // y = -1
+  '.DKggBBBBBBBBBBBBBBBBBBW..', // y = 0
+  '...GGBBBBBBBBBBBBBBBBBW...', // y = 1
+  '.....DDDDDDDDDDDDDDDD.....', // y = 2
 ];
 
 const PART_OF: Record<string, ShellPart> = {
@@ -65,6 +64,7 @@ const PART_OF: Record<string, ShellPart> = {
   R: 'red',
   W: 'noseTip',
   F: 'filler',
+  S: 'steel',
 };
 
 /**
@@ -88,7 +88,7 @@ const CELL_MASS: Record<ShellPart, number> = {
   fillerLight: 0.8,
 };
 
-const ART_LEFT = -10;
+const ART_LEFT = -12;
 
 function buildBase(): ShellCell[] {
   const cells: ShellCell[] = [];
@@ -97,38 +97,25 @@ function buildBase(): ShellCell[] {
     for (let col = 0; col < line.length; col += 1) {
       const part = PART_OF[line[col]!];
       if (!part) continue;
-      cells.push({ x: ART_LEFT + col, y: row - 5, part, reveal: 0 });
+      // Rows are centred on the flight axis: the art is 6 rows tall, so row 0
+      // sits at y = -3 and the last row at y = +2.
+      cells.push({ x: ART_LEFT + col, y: row - 3, part, reveal: 0 });
     }
   }
-  // Red flecks sprayed around the drive band, plus two pale chips on the
-  // forward shoulder -- the two details that identify the round in the footage.
-  const flecks: Array<[number, number, ShellPart]> = [
-    [-6, -3, 'red'],
-    [-5, -1, 'red'],
-    [-4, 2, 'red'],
-    [-6, 1, 'red'],
-    [-3, -2, 'red'],
-    [-1, -4, 'noseTip'],
-    [1, -3, 'noseTip'],
-    [3, -1, 'light'],
-  ];
-  for (const [x, y, part] of flecks) {
-    const existing = cells.find((c) => c.x === x && c.y === y);
-    if (existing) existing.part = part;
-    else cells.push({ x, y, part, reveal: 0 });
-  }
-  // The octagonal filler only shows once the casing opens. It is the whole
-  // interior of the round, not a decorative dot: the footage's crushed shell
-  // shows a solid amber core through the torn casing.
-  for (let x = -3; x <= 4; x += 1) {
-    for (let y = -2; y <= 2; y += 1) {
-      if (Math.abs(x - 0.5) * 0.42 + Math.abs(y) > 1.9) continue;
+  // The steel core: the x-ray frame shows a solid pointed dart filling most
+  // of the jacket. It only becomes visible once the casing above it has been
+  // crushed away -- in flight it is hidden under the blue-grey body, exactly
+  // as the footage shows. The core is the heaviest part of the lattice, so it
+  // keeps driving forward while the lighter jacket folds around it.
+  for (let x = -7; x <= 10; x += 1) {
+    const half = x <= 4 ? 1 : Math.max(0, 1 - Math.floor((x - 4) / 2.5));
+    for (let y = -half; y <= half; y += 1) {
       const existing = cells.find((c) => c.x === x && c.y === y);
       if (existing) {
-        existing.part = 'filler';
-        existing.reveal = 0.24;
+        existing.part = 'steel';
+        existing.reveal = 0.22;
       } else {
-        cells.push({ x, y, part: 'filler', reveal: 0.24 });
+        cells.push({ x, y, part: 'steel', reveal: 0.22 });
       }
     }
   }

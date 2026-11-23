@@ -361,8 +361,8 @@ export class App {
     this.save.setLastStage(def.id);
     const preferred = AMMO_BY_ID.has(this.save.data.preferredAmmo)
       ? this.save.data.preferredAmmo
-      : def.suggestedAmmo[0] ?? 'aphe-hybrid';
-    const ammoId = saved?.aim.ammoId ?? (AMMO_BY_ID.has(preferred) ? preferred : 'aphe-hybrid');
+      : def.suggestedAmmo[0] ?? 'ap-solid-shot';
+    const ammoId = saved?.aim.ammoId ?? (AMMO_BY_ID.has(preferred) ? preferred : 'ap-solid-shot');
     this.mission = {
       def,
       built,
@@ -664,7 +664,7 @@ export class App {
       kind: 'ammo',
       render: () =>
         renderAmmoPicker({
-          currentId: this.mission?.ammoId ?? 'aphe-hybrid',
+          currentId: this.mission?.ammoId ?? 'ap-solid-shot',
           onClose: () => this.popOverlay(),
           onLoad: (id) => {
             this.scene?.setAmmo(id);
