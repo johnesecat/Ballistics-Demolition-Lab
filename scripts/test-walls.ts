@@ -7,7 +7,9 @@ import { snapshotCoreCoverFraction } from '../src/game/stages/generator';
 import { deserializeWallState, simulateShotWalls } from '../src/game/sim/wall-simulator';
 import { previewShot } from '../src/game/sim/preview';
 import { crossLayer, makeProjectileBody } from '../src/game/sim/projectile-body';
-import { mergeWallRects } from '../src/game/stages/wall-builder';
+import { mergeWallRects, wallArea as builderWallArea } from '../src/game/stages/wall-builder';
+import { defineOutlineWall } from '../src/game/stages/wallAuthoring';
+import { pointInPolygon } from '../src/game/sim/walls';
 
 function assert(cond: boolean, msg: string): void { if (!cond) throw new Error(msg); }
 
@@ -195,3 +197,34 @@ assert(openingShot.result.final.core.hp === snapshot.core.hp, 'opening shot must
 console.log(`preview honesty: willHitCore=${preview.willHitCore} core=${openingShot.result.final.core.hp}/${snapshot.core.hp}`);
 
 console.log('Wall-object simulation checks passed');
+
+// Line-defined walls (wallAuthoring): an object is set up by its outline and
+// populated by its material in real time -- hollow means the perimeter band
+// only (empty interior), solid means the whole interior is material.
+// A 100x100 steel square, 8 units of band.
+const rect = [{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }, { x: 0, y: 100 }];
+const solidBox = defineOutlineWall(rect, 'steel');
+const hollowBox = defineOutlineWall(rect, 'steel', { hollow: true, thickness: 8 });
+assert(solidBox.material === 'steel' && hollowBox.material === 'steel', 'the authored material populates the wall');
+assert(pointInPolygon({ x: 50, y: 50 }, solidBox.polygons[0]!), 'solid box fills its interior');
+const hollowCenterCovered = hollowBox.polygons.some((p) => pointInPolygon({ x: 50, y: 50 }, p));
+assert(!hollowCenterCovered, 'hollow box leaves its interior empty');
+assert(hollowBox.polygons.some((p) => pointInPolygon({ x: 50, y: 4 }, p)), 'hollow box keeps its perimeter band');
+assert(hollowBox.polygons.some((p) => pointInPolygon({ x: 4, y: 50 }, p)), 'hollow box keeps its side bands');
+const solidArea = builderWallArea([solidBox]);
+const hollowArea = builderWallArea([hollowBox]);
+assert(Math.abs(solidArea - 10000) < 1, `solid area is the full box, got ${solidArea}`);
+assert(hollowArea > 2000 && hollowArea < 5000, `hollow area is the band only, got ${hollowArea}`);
+// The projectile traces the same geometry either way: the shell bores the
+// perimeter from outside and flies through the hollow interior.
+const hitSolid = traceWalls([solidBox], { x: -10, y: 50 }, { x: 50, y: 50 }, 2);
+assert(hitSolid !== null, 'solid box is hit from outside');
+const throughHollow = traceWalls([hollowBox], { x: 20, y: 50 }, { x: 80, y: 50 }, 2);
+assert(throughHollow === null, 'hollow interior is empty air for the tracer');
+const hitHollowWall = traceWalls([hollowBox], { x: -10, y: 50 }, { x: 20, y: 50 }, 2);
+assert(hitHollowWall !== null, 'hollow perimeter still stops a shell from outside');
+// Deterministic: same outline, same wall, every run.
+const again = defineOutlineWall(rect, 'steel', { hollow: true, thickness: 8 });
+assert(again.id === hollowBox.id, 'outline walls carry deterministic ids');
+assert(builderWallArea([again]) === hollowArea, 'identical outlines author identical walls');
+console.log(`line walls: solid ${Math.round(solidArea)} hollow ${Math.round(hollowArea)} (perimeter only), tracer agrees`);
