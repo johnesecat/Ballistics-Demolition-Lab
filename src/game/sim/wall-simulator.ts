@@ -311,6 +311,20 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
     if (x < -90 || x > WORLD.width + 110 || y > WORLD.height + 100 || y < -220) break;
   }
 
+  // A round that contacted a wall but later left the range still carries its
+  // charge: delayed phases are timed from the fuse lighting (first contact),
+  // so they fire at the entry point where the shell first bit, instead of
+  // never happening. The virtual impact is NOT a terminal one --
+  // terminalImpact stays null, so no wreck is built in a wall the round
+  // already flew through, and purely kinetic rounds are untouched (they have
+  // no charge to fire), as are rounds that never touched anything (the fuse
+  // in the reference is always armed by contact, so there is no detonation).
+  if (!impact && firstContact && phases.some((p) => p.channel !== 'kinetic')) {
+    impact = { ...firstContact };
+    impactTime = contactAt >= 0 ? contactAt : simTime;
+    messages.push('CHARGE FIRED OUT OF RANGE');
+  }
+
   const phaseWallStates: import('./types').WallPhaseRecord[] = [];
   const timedBodies: Array<FragmentBody & { spawnT: number }> = [...flightBodies];
   const bodiesBefore = bodies.length;

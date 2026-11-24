@@ -169,6 +169,41 @@ assert.equal(pierce.result.impact, null, 'a shell that flies out of bounds must 
 assert.equal(pierce.result.damageEvents.some((event) => event.label === 'SABOT CORE'), false, 'a pass-through must not trigger the terminal phase at its entry');
 assert.equal(pierce.result.damageEvents.some((event) => event.label === 'PENETRATION'), true, 'the physical bore still remains');
 
+// An explosive round that contacts a wall but then leaves the range must
+// still fire its delayed charge: the fuse was lit at the entry wall, so the
+// blast detonates there instead of never happening. aphe-hybrid at
+// 10 deg / 300 straight bores one layer (contact @869,190), exits right
+// (impact was null), and its DELAYED CHARGE must still count: the impact is
+// recorded at the entry point and the blast adds damage beyond the bore.
+// A pure-kinetic round (apds-sabot above) keeps the old do-nothing behavior,
+// and a round that never touches anything (30 deg exits the top, contact
+// null) must not detonate: there was no impact to light the fuse.
+const oob = simulateShotWalls(built.def, snapshot, { angleDeg: 10, power: 300, mode: 'straight', ammoId: 'aphe-hybrid' });
+assert(oob.result.firstContact, 'the explosive case must contact a wall first');
+assert(oob.result.impact, 'an explosive round that bores and exits must record an impact');
+const oobBlast = oob.result.damageEvents.filter((event) => event.label === 'DELAYED CHARGE');
+assert(oobBlast.length === 1, 'the delayed charge must fire exactly once after the round leaves the range');
+assert(oob.result.effects.some((event) => event.kind === 'blast'), 'the blast effect must be emitted');
+assert(oob.result.messages.includes('CHARGE FIRED OUT OF RANGE'), 'the detonation must be visible in the shot summary');
+assert(
+  Math.hypot(oob.result.impact!.x - oob.result.firstContact!.x, oob.result.impact!.y - oob.result.firstContact!.y) < 5,
+  'the charge detonates at the entry point where the fuse was lit',
+);
+assert.equal(oob.result.wreck.length, 0, 'the round left the range, so it must not leave a wreck at the entry');
+const overTop = simulateShotWalls(built.def, snapshot, { angleDeg: 30, power: 300, mode: 'straight', ammoId: 'aphe-hybrid' });
+assert.equal(overTop.result.impact, null, 'a round that never touches anything must not detonate');
+assert.equal(overTop.result.damageEvents.some((event) => event.label === 'DELAYED CHARGE'), false, 'no contact, no charge');
+console.log(`oob explosive: blast @${Math.round(oob.result.impact.x)},${Math.round(oob.result.impact.y)} cellDamage ${oob.result.cellDamage} (bore alone was 4), no wreck`);
+// The blast also has to be able to ADD damage, not just register: HE Demolition
+// at 6 deg / 300 straight bores six layers and exits (impact was null); its
+// DEMOLITION CHARGE now fires at the entry wall and takes cellDamage from 11
+// (bore-only) to 40.
+const oobHe = simulateShotWalls(built.def, snapshot, { angleDeg: 6, power: 300, mode: 'straight', ammoId: 'he-demolition' });
+assert(oobHe.result.impact, 'the HE ballistic must record an impact at the entry wall');
+assert(oobHe.result.effects.some((event) => event.kind === 'blast'), 'HE blast effect must be emitted');
+assert(oobHe.result.cellDamage > 11, `the exit blast must add damage beyond the bores, got ${oobHe.result.cellDamage}`);
+console.log(`oob HE: blast @${Math.round(oobHe.result.impact!.x)},${Math.round(oobHe.result.impact!.y)} cellDamage ${Math.round(oobHe.result.cellDamage)} (bore-only was 11)`);
+
 // The opposite case: a round that crosses layer after layer but is finally
 // stopped by another wall gets its wreck at the stop, not at the first
 // contact. The AP Solid Shot does exactly this: it bores through the timber
