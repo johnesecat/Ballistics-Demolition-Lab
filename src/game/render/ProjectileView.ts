@@ -62,8 +62,10 @@ export class ProjectileView {
   private sim: ShellImpact | null = null;
   private simKey = '';
   private simAge = 0;
+  private scene: Phaser.Scene;
 
   constructor(scene: Phaser.Scene, depth = 20) {
+    this.scene = scene;
     this.glow = scene.add.graphics().setDepth(depth - 1).setVisible(false);
     this.g = scene.add.graphics().setDepth(depth).setVisible(false);
   }
@@ -80,7 +82,12 @@ export class ProjectileView {
     g.setVisible(true);
     glow.setVisible(true);
 
-    const cell = CELL * Math.max(0.72, Math.min(1.35, length / 34));
+    // Zoomed out, the world-sized cells would shrink below a pixel and the
+    // dart would melt into the trail dashes -- the reference's far-zoom
+    // frames keep a readable dart with its amber band. Floor the cell at
+    // ~2.2 screen pixels so detail survives zoom-out without re-rendering.
+    const zoom = this.scene.cameras.main?.zoom ?? 1;
+    const cell = Math.max(CELL * Math.max(0.72, Math.min(1.35, length / 34)), 2.2 / Math.max(0.2, zoom));
 
     if (!shell || shell.age <= 0) {
       // In flight: pristine reference silhouette, built from the same lattice so
