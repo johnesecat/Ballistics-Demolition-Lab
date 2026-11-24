@@ -159,8 +159,7 @@ export class StructureView {
    * resampled.
    */
   refreshHeat(state: WallState | null): void {
-    this.heatLayer.clear();
-    this.thermalGlow.clear();
+    // drawHeatField clears and repaints only when its key changes.
     if (state) this.drawHeatField(state);
   }
 
@@ -177,7 +176,9 @@ export class StructureView {
     this.heatLayer.clear();
     this.thermalGlow.clear();
     if (state) this.drawHeatField(state);
-    this.setBodies(bodies, true);
+    // No force: settled chips repaint only on motion (setBodies' own gate),
+    // so heat-peak ticks stop churning the body layer.
+    this.setBodies(bodies);
   }
 
   /**
@@ -374,9 +375,22 @@ export class StructureView {
    * reference shows. Samples are a fixed grid so the result is byte-identical on
    * every replay.
    */
+  private lastHeatKey = '';
+
   private drawHeatField(state: WallState): void {
     const hg = this.heatLayer;
-    if (state.heat.length === 0 || state.walls.length === 0) return;
+    if (state.heat.length === 0 || state.walls.length === 0) { this.lastHeatKey = ''; return; }
+    const step = this.bakeCell();
+    // Rasterize heat pixels ONLY when the field actually changes. Key on
+    // quantized heat (0.02 buckets), centres and radii: cooling between
+    // buckets is invisible, so idle ticks cost zero work.
+    let heatKey = `${step}|${state.heat.length}|${state.walls.length}|${this.thermal}|`;
+    for (const r of state.heat) {
+      if (r.heat <= 0.03) continue;
+      heatKey += `${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.radius)},${Math.round(r.heat * 50)}|${r.material ?? ''};`;
+    }
+    if (heatKey === this.lastHeatKey) return;
+    this.lastHeatKey = heatKey;
     const field = new Map<number, { heat: number; material: MaterialId }>();
     let minX = Infinity;
     let minY = Infinity;
@@ -393,15 +407,24 @@ export class StructureView {
     if (!Number.isFinite(minX)) return;
     // Heat pixels share the wall raster's grid, so the burn is made of the
     // same squares as the slab instead of a second, offset particle field.
-    const step = this.bakeCell();
     minX = Math.floor(minX / step) * step;
     minY = Math.floor(minY / step) * step;
     const cols = Math.ceil((maxX - minX) / step);
+    // One surfaces list per material, built once per draw -- not once per
+    // heat region per frame (that rebuild was the whole heat-peak cost).
+    const surfacesByMaterial = new Map<MaterialId, Array<{ poly: Polygon; minX: number; maxX: number; minY: number; maxY: number }>>();
+    for (const w of state.walls) {
+      let list = surfacesByMaterial.get(w.material);
+      if (!list) { list = []; surfacesByMaterial.set(w.material, list); }
+      for (const poly of w.polygons) {
+        list.push({ poly, minX: Math.min(...poly.map(p => p.x)), maxX: Math.max(...poly.map(p => p.x)), minY: Math.min(...poly.map(p => p.y)), maxY: Math.max(...poly.map(p => p.y)) });
+      }
+    }
     for (const r of state.heat) {
       if (r.heat <= 0.03) continue;
       const material = r.material ?? materialAt(state.walls, r);
       if (!material) continue;
-      const surfaces = state.walls.filter(w => w.material === material).flatMap(w => w.polygons).map(poly => ({ poly, minX: Math.min(...poly.map(p => p.x)), maxX: Math.max(...poly.map(p => p.x)), minY: Math.min(...poly.map(p => p.y)), maxY: Math.max(...poly.map(p => p.y)) }));
+      const surfaces = surfacesByMaterial.get(material) ?? [];
       const radius = r.radius > 0 ? r.radius : 20 + r.heat * 34;
       const gx0 = Math.max(0, Math.floor((r.x - radius - minX) / step));
       const gx1 = Math.min(cols - 1, Math.ceil((r.x + radius - minX) / step));
@@ -432,6 +455,7 @@ export class StructureView {
     // test runs here — the old duplicate pass doubled the cost and could
     // disagree with the mask at edges, printing a halo outside the wall.
     const glow = this.thermalGlow;
+    hg.clear();
     glow.clear();
     for (const [key, cell] of field) {
       const gx = key % cols;

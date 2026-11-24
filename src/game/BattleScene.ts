@@ -119,6 +119,8 @@ export class BattleScene extends Phaser.Scene {
   private projectileView!: ProjectileView;
   /** Close to an object, the round converts to x-ray and stays that way. */
   private xrayLatched = false;
+  private xrayLatchElapsed: number | null = null;
+  private xrayPauseArm = false;
   private previewGraphics!: Phaser.GameObjects.Graphics;
   private trailGraphics!: Phaser.GameObjects.Graphics;
   private aimGuide!: Phaser.GameObjects.Graphics;
@@ -906,6 +908,7 @@ export class BattleScene extends Phaser.Scene {
       coreVisual: ammo.flight.separation !== 'carrier',
     };
     this.xrayLatched = false;
+    this.xrayLatchElapsed = null;
     this.tweens.timeScale = 1;
     this.matter.world.resume();
     this.matter.world.engine.timing.timeScale = 1;
@@ -946,6 +949,16 @@ export class BattleScene extends Phaser.Scene {
         durationMs: playback.result.durationMs,
       });
     }
+  }
+
+  /** Arm a deterministic pause on the exact latch frame of the x-ray
+   * conversion (test/proof hook): the replay freezes on the first rendered
+   * frame after `xrayLatched` flips, so the converted round can be shot. */
+  armXrayPause(): void { this.xrayPauseArm = true; }
+
+  /** Current x-ray state for debug/proof tools. */
+  xrayState(): { latched: boolean; latchElapsed: number | null; elapsed: number } {
+    return { latched: this.xrayLatched, latchElapsed: this.xrayLatchElapsed, elapsed: this.playback?.elapsed ?? 0 };
   }
 
   setReplaySpeed(speed: number): void {
@@ -1065,6 +1078,13 @@ export class BattleScene extends Phaser.Scene {
     this.cine.slow = slow;
     const advance = delta * playback.speed * slow;
     playback.elapsed += advance;
+    // Deterministic latch-frame pause (armed via armXrayPause): fires on the
+    // first playback tick after the latch flips, with the converted round
+    // already drawn for this frame.
+    if (this.xrayPauseArm && this.xrayLatched) {
+      this.xrayPauseArm = false;
+      this.setReplayPaused(true);
+    }
     if (this.focusArmed && this.focusWall && playback.elapsed >= this.cine.impactT - 260) {
       this.structure.setFocus(this.focusWall);
       this.focusArmed = false;
@@ -1159,6 +1179,7 @@ export class BattleScene extends Phaser.Scene {
       const core = playback.result.start.core;
       if (nearestObstacleDistance({ x, y }, walls, { x: core.x, y: core.y, radius: core.radius }) < 80) {
         this.xrayLatched = true;
+        this.xrayLatchElapsed = playback.elapsed;
       }
     }
     this.lastProjectile = { x, y, angle };
