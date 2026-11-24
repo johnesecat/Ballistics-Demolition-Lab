@@ -48,19 +48,6 @@ const STYLE_ROWS: Record<GeneratorStyle, [number, number]> = {
   fort: [30, 40],
 };
 
-/**
- * Wall thickness caps (in cells), per the reference build rules: metal never
- * thicker than 5, brick/concrete/wood/slopes never thicker than 7.
- */
-export const THICKNESS_CAP: Record<MaterialId, number> = {
-  steel: 5,
-  armor: 5,
-  brick: 7,
-  concrete: 7,
-  wood: 7,
-  slopes: 7,
-};
-
 export const THEME_PALETTES = {
   harbor: {
     skyTop: 0x0a1420,

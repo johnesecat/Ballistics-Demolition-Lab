@@ -17,7 +17,8 @@
     "test:collision": "tsx scripts/test-collision.ts",
     "test:projectile": "tsx scripts/test-projectile.ts",
     "test:save": "tsx scripts/test-save.ts",
-    "test:deform": "tsx scripts/test-deform.ts"
+    "test:deform": "tsx scripts/test-deform.ts",
+    "sample-round": "tsx scripts/render_round.ts && python3 scripts/sample_projectile.py"
   },
   "keywords": [],
   "author": "",

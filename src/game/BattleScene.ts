@@ -1142,7 +1142,9 @@ export class BattleScene extends Phaser.Scene {
           frame.angle,
           body,
           34 * (ammo.flight.spriteScale ?? 1) * frame.scale,
-          frame.shell ? { ...frame.shell, age: (playback.elapsed - frame.t) / 1000 } : undefined,
+          frame.shell
+            ? { ...frame.shell, age: frame.shell.age + (playback.elapsed - frame.t) / 1000 }
+            : undefined,
         );
         this.projectile.setVisible(false);
         return;
@@ -1167,7 +1169,7 @@ export class BattleScene extends Phaser.Scene {
       angle,
       body,
       34 * (ammo.flight.spriteScale ?? 1) * scale,
-      current.shell ? { ...current.shell, age: 0 } : undefined,
+      current.shell ? { ...current.shell } : undefined,
     );
     // The legacy texture sprite must stay hidden: drawing both produced the
     // doubled, wrong-looking bullet reported in the recordings review.
@@ -1201,9 +1203,9 @@ export class BattleScene extends Phaser.Scene {
     g.clear();
     if (points.length < 2) return;
     const ammo = this.getAmmo();
-    // The newest recording's kinetic rounds trail warm orange/white dashes, not
-    // a solid ribbon; the alternating colours below keep that read.
-    const color = ammo.vfx.family === 'kinetic' || ammo.vfx.family === 'aphe' ? 0xffb066 : ammo.vfx.trail;
+    // The newest recording's kinetic rounds trail pale blue-white dashes, not a
+    // solid ribbon; the alternating colours below keep that read.
+    const color = ammo.vfx.family === 'kinetic' || ammo.vfx.family === 'aphe' ? 0xb9d9ea : ammo.vfx.trail;
     const strength = ammo.vfx.trailLength;
     const offset = 2.4;
     for (let i = 1; i < points.length; i += 1) {

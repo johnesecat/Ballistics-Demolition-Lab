@@ -42,6 +42,8 @@ export interface ShellFrameState {
   mass: number;
   integrity: number;
   seed: number;
+  /** Seconds since the shell first touched a solid. Drives the pixel lattice. */
+  age: number;
   /** Face material the shell is working against (drives the pixel fracture). */
   material?: MaterialId | null;
 }

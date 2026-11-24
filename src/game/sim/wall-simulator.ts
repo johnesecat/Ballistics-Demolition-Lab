@@ -12,7 +12,7 @@ import type { DamageEvent, EffectEvent, ImpactInfo, ProjectileFrame, ShellFrameS
 import { addHeat, cloneWallState, detachUnsupported, pointInPolygon, pointInWalls, wallsFromSnapshot, type WallState } from './walls';
 import { survivorHeatPoint } from './heat-anchor';
 import { deformHeatedWalls, tearRim } from './wall-deform';
-import { THICKNESS_CAP, crossLayer, makeProjectileBody } from './projectile-body';
+import { crossLayer, makeProjectileBody } from './projectile-body';
 
 /**
  * Wall-object shot simulation (P0-3..P0-10). Damage authority is Wall polygons
@@ -121,6 +121,11 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
   let ricochets = 0;
   let impactVx = 0;
   let impactVy = 0;
+  // First touch of a solid. The shell's pixel lattice is driven from this
+  // instant, not from the end of the flight, so the round visibly crushes on
+  // the face while it bores -- the sprite collides with what it hits instead of
+  // flying through intact geometry and snapping to a wreck afterwards.
+  let contactAt = -1;
 
   const maxSteps = Math.min(PHYSICS.maxSimulationSteps, Math.ceil(PHYSICS.maxFlightSeconds / dt));
   for (let step = 0; step < maxSteps; step += 1) {
@@ -162,6 +167,7 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
       const cy = contact.y;
       const cnx = contact.nx;
       const cny = contact.ny;
+      if (contactAt < 0) contactAt = simTime;
       if (!firstContact) {
         firstContact = { x: cx, y: cy, nx: cnx, ny: cny, kind: 'cell', material: contact.material, contactX: cx, contactY: cy, wallId: contact.wallId };
       }
@@ -178,7 +184,7 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
         x = cx + cnx * (ammo.flight.radius + 1.4);
         y = cy + cny * (ammo.flight.radius + 1.4);
         effects.push({ t: simTime * 1000, kind: 'bounce', x: cx, y: cy, angle: Math.atan2(cny, cnx), family: ammo.vfx.family, material: contact.material });
-        frames.push({ t: simTime * 1000, x, y, angle: Math.atan2(vy, vx), scale: 1, visible: true, squash: pBody.squash, layers: pBody.layers });
+        frames.push({ t: simTime * 1000, x, y, angle: Math.atan2(vy, vx), scale: 1, visible: true, squash: pBody.squash, layers: pBody.layers, shell: shellState(pBody, contact.material, pBody.speed, simTime * 1000, simTime - contactAt) });
         trajectory.push({ x, y, angle: Math.atan2(vy, vx) });
         continue;
       }
@@ -211,10 +217,10 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
           const dir = norm(vx, vy);
           const span = wall ? raySpanInWall(wall, entry, dir) : thicknessAlongRay(layer, dir, ammo.flight.radius);
           const costed = crossLayer(pBody, mat, span, MATERIALS[mat].resistance.kinetic);
-          const tooThick = span > THICKNESS_CAP[mat];
-          if (costed === null || tooThick) {
-            // Squash against the plate: the reference round flattens and stops
-            // when the material is thicker than its cap, regardless of energy.
+          if (costed === null) {
+            // Out of speed inside the layer: the round flattens against the
+            // face. Thickness itself never vetoes a crossing -- what the round
+            // cannot pay for in speed is what stops it.
             pBody.squash = 1;
             pBody.integrity = Math.max(0, pBody.integrity - 0.25);
             stopContact = layer;
@@ -242,7 +248,7 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
           }
           effects.push({ t: simTime * 1000, kind: 'penetrate', x: exit.x, y: exit.y, angle: Math.atan2(dir.y, dir.x), family: ammo.vfx.family, material: mat });
           trajectory.push({ x: exit.x, y: exit.y, angle: Math.atan2(vy, vx) });
-          frames.push({ t: simTime * 1000, x: exit.x, y: exit.y, angle: Math.atan2(vy, vx), scale: 1, visible: true, squash: pBody.squash, layers: pBody.layers, shell: shellState(pBody, mat, pBody.speed, simTime * 1000) });
+          frames.push({ t: simTime * 1000, x: exit.x, y: exit.y, angle: Math.atan2(vy, vx), scale: 1, visible: true, squash: pBody.squash, layers: pBody.layers, shell: shellState(pBody, mat, pBody.speed, simTime * 1000, simTime - contactAt) });
           if (pBody.speed <= 0) { stopContact = layer; stoppedByLayer = true; break; }
           entry = exit;
           // Probe forward for the next layer (thin stacked plates can sit
@@ -263,7 +269,7 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
           stopContact = null;
         }
       }
-      frames.push({ t: simTime * 1000, x, y, angle: Math.atan2(vy, vx), scale: 1, visible: true, squash: pBody.squash, layers: pBody.layers });
+      frames.push({ t: simTime * 1000, x, y, angle: Math.atan2(vy, vx), scale: 1, visible: true, squash: pBody.squash, layers: pBody.layers, shell: shellState(pBody, stopContact?.material ?? contact?.material, pBody.speed, simTime * 1000, simTime - contactAt) });
       trajectory.push({ x, y, angle: Math.atan2(vy, vx) });
       if (stoppedByLayer && stopContact) {
         impact = {
@@ -289,6 +295,7 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
       const gx = x + (nx - x) * t;
       impactTime = simTime - dt * (1 - t);
       impact = { x: gx, y: floor, nx: 0, ny: -1, kind: 'ground', contactX: gx, contactY: floor };
+      if (contactAt < 0) contactAt = simTime;
       terminalImpact = impact;
       impactVx = vx;
       impactVy = vy;
@@ -346,7 +353,7 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
   // impact, so a deterministic wreck timeline carries the peeled, tumbling
   // shell through the rest of the replay instead of freezing it on the wall.
   const wreck = terminalImpact && (terminalImpact.kind === 'cell' || terminalImpact.kind === 'ground')
-    ? buildWreckFrames(terminalImpact, impactVx, impactVy, ammo, impactTime * 1000, pBody)
+    ? buildWreckFrames(terminalImpact, impactVx, impactVy, ammo, impactTime * 1000, pBody, contactAt >= 0 ? Math.max(0, impactTime - contactAt) : 0)
     : [];
 
   const core = { ...snapshot.core };
@@ -416,6 +423,8 @@ function buildWreckFrames(
   ammo: import('../ammo/types').AmmoDef,
   startMs: number,
   body: { squash: number; integrity: number; layers: number; mass: number },
+  /** Lattice age already accumulated during the flight (seconds since contact). */
+  ageAtStart = 0,
 ): ProjectileFrame[] {
   const nx = impact.nx;
   const ny = impact.ny;
@@ -459,6 +468,9 @@ function buildWreckFrames(
         speed: Math.max(0, Math.hypot(vx, vy)),
         mass: body.mass,
         integrity: body.integrity,
+        // Wreck age continues from the moment of contact, so the lattice picks
+        // up the crush it already had instead of restarting at zero.
+        age: ageAtStart + elapsed,
         material: impact.material ?? null,
         seed: (Math.round(startMs) ^ (body.layers * 40503)) >>> 0,
       },
@@ -593,6 +605,8 @@ function shellState(
   material: string | undefined,
   speed: number,
   tMs: number,
+  /** Seconds since first contact; the pixel lattice is stepped from here. */
+  age: number,
 ): ShellFrameState {
   const hardness = faceHardness(material);
   const crumple = Math.min(1, body.squash * (0.55 + hardness * 0.7) + body.layers * 0.08);
@@ -603,6 +617,7 @@ function shellState(
     speed,
     mass: body.mass,
     integrity: body.integrity,
+    age: Math.max(0, age),
     material: (material as MaterialId | undefined) ?? null,
     seed: (Math.round(tMs) ^ (body.layers * 2654435761)) >>> 0,
   };

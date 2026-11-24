@@ -16,20 +16,25 @@ import type { MaterialId } from '../materials';
  * hot chip glows on the way out.
  */
 
-const COLORS: Record<ShellPart, number> = {
-  outline: 0x39485a,
-  body: 0x7d92a3,
-  light: 0xa8bccb,
-  dark: 0x55697b,
-  steel: 0x64798a,
-  nose: 0x6d8394,
-  noseTip: 0xd6e2ea,
-  orange: 0xe0a23a,
-  orangeLight: 0xf2c063,
-  orangeDark: 0xb5792a,
-  red: 0xc0563a,
-  filler: 0xd8b544,
-  fillerLight: 0xf0d36b,
+/**
+ * Casing tones sampled from the in-flight reference frame (IMG_4966): the
+ * shell is a low-contrast blue-grey with a slightly brighter band just above
+ * the axis, not a bright silver sprite.
+ */
+export const SHELL_COLORS: Record<ShellPart, number> = {
+  rim: 0x6d7e8b,
+  light: 0x94a5b2,
+  highlight: 0xa6b7c4,
+  body: 0x8b9ca9,
+  dark: 0x7d8e9b,
+  belly: 0x687986,
+  band: 0xcd9854,
+  bandLight: 0xd9a45f,
+  bandDark: 0xc18d4b,
+  cap: 0x515f6d,
+  tip: 0xc6d4de,
+  rivet: 0x3b4a57,
+  steel: 0xaec6d6,
 };
 
 /** World units per art cell. Smaller than the wall raster's 2-unit cells. */
@@ -84,7 +89,10 @@ export class ProjectileView {
       return;
     }
 
-    const key = `${shell.seed}|${shell.mass}|${shell.integrity}|${shell.material ?? 'none'}|${Math.round(shell.speed)}|${Math.round(shell.hardness * 100)}|${Math.round(shell.crumple * 100)}`;
+    // Only the contact state builds a lattice. Squash and crumple keep changing
+    // during the crush, and rebuilding on those values restarted the solver
+    // every frame -- the round tore and re-formed instead of deforming.
+    const key = `${shell.seed}|${shell.mass}|${shell.material ?? 'none'}|${Math.round(shell.speed)}|${Math.round(shell.hardness * 100)}`;
     if (!this.sim || key !== this.simKey) {
       this.sim = new ShellImpact({
         speed: shell.speed,
@@ -144,7 +152,7 @@ export class ProjectileView {
         const part = row[start]!.part;
         let end = start + 1;
         while (end < row.length && row[end]!.part === part && row[end]!.x === row[end - 1]!.x + 1) end += 1;
-        g.fillStyle(COLORS[part], 1);
+        g.fillStyle(SHELL_COLORS[part], 1);
         g.fillRect(row[start]!.x * cell, rowY * cell, (end - start) * cell, cell);
         start = end;
       }
@@ -164,5 +172,5 @@ export class ProjectileView {
   }
 }
 
-/** Pristine silhouette, in flight (filler still covered by the casing). */
+/** Pristine silhouette, in flight (the steel core is under the casing). */
 const PRISTINE: ShellCell[] = pristineShell();

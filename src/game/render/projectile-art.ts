@@ -1,44 +1,46 @@
-import {
-  SHELL_BASE,
-  deformShell,
-  shellBounds,
-  type ShellCell,
-  type ShellDeformParams,
-  type ShellPart,
-} from '../sim/projectile-shell';
+import { ShellImpact, type ShellImpactInput } from '../sim/shell-pixels';
+import { SHELL_BASE, shellBounds, type ShellCell, type ShellPart } from '../sim/projectile-shell';
 
 /**
  * Reference projectile sprite: the AP Solid Shot, rebuilt from the three newest
- * frames. In flight it is a long ogival shell about 3.8 : 1 -- pale blue-grey
- * with a light upper facet, a dark belly, a rivet on the flank, a fine bright
- * tip and an amber driving band at the base -- and the x-ray frame shows a
- * solid steel core filling the jacket, which is why the interior lattice cells
- * are `steel` and only appear once the casing tears.
+ * frames. In flight it is a 24 x 6 sampled ogive -- pale blue-grey with a
+ * brighter band just above the axis, a boat-tail and amber driving band at the
+ * base, a flank rivet and a single pale tip cell -- and the x-ray frame shows a
+ * solid steel core hidden inside the jacket, which is why the interior lattice
+ * cells are `steel` under a casing skin.
  *
- * Deformation is solved by the mass lattice in `sim/projectile-shell.ts`, so a
- * cell that tears off carries its own mass and leaves a gap. Everything is
- * snapped to whole cells, so the squash reads as pixel destruction.
+ * There is exactly one physics model for the round: the spring lattice in
+ * `sim/shell-pixels.ts`. This module only wraps it for callers that need the
+ * rendered cells (HUD card, tests), so the card art, the flight sprite and the
+ * impact wreck are all the same solver at different ages.
  */
 
 export type ProjectilePart = ShellPart;
 export type ProjectileCell = ShellCell;
 
-/** Pristine silhouette, used by tests and by the HUD card art. */
-export function projectileCells(squash: number, integrity = 1): ProjectileCell[] {
-  return deformShell({
-    squash,
-    crumple: squash > 0 ? Math.min(1, squash * 0.9) : 0,
-    hardness: 0.8,
-    speed: 420,
-    mass: 9,
-    integrity,
-    seed: 1,
-  }).cells;
+/** Simulated shell at a given age after contact. */
+export function projectileImpact(input: ShellImpactInput): ShellImpact {
+  return new ShellImpact(input);
 }
 
-/** Full deform call: real crumple, mass-aware shedding and chips. */
-export function projectileCrumple(params: ShellDeformParams) {
-  return deformShell(params);
+/**
+ * Cells for the HUD/test silhouette: `squash` 0 is the pristine round, 1 is a
+ * fully wrecked casing. It runs the same lattice the shot runs, so the card art
+ * cannot drift from the flight sprite.
+ */
+export function projectileCells(squash: number, integrity = 1): ProjectileCell[] {
+  const sim = new ShellImpact({
+    speed: 420,
+    mass: 9,
+    material: 'steel',
+    integrity,
+    seed: 1,
+    hardness: 0.8,
+    crumple: squash > 0 ? Math.min(1, squash * 0.9) : 0,
+  });
+  // A fully wrecked round is the lattice settled against the face.
+  sim.stepTo(Math.max(0, Math.min(1, squash)) * 0.6);
+  return sim.cells();
 }
 
 export function projectileBounds(cells: ProjectileCell[]): { width: number; height: number } {

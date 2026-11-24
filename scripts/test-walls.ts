@@ -6,7 +6,7 @@ import { coreCoverFraction, detachUnsupported, wallsArea, wallsFromSnapshot } fr
 import { snapshotCoreCoverFraction } from '../src/game/stages/generator';
 import { deserializeWallState, simulateShotWalls } from '../src/game/sim/wall-simulator';
 import { previewShot } from '../src/game/sim/preview';
-import { THICKNESS_CAP, crossLayer, makeProjectileBody } from '../src/game/sim/projectile-body';
+import { crossLayer, makeProjectileBody } from '../src/game/sim/projectile-body';
 import { mergeWallRects } from '../src/game/stages/wall-builder';
 
 function assert(cond: boolean, msg: string): void { if (!cond) throw new Error(msg); }
@@ -22,18 +22,22 @@ assert(wallArea > 3000, `wall area too small: ${wallArea}`);
 assert(snapshot.grid.cells.length === 0, 'grid cells adapter must stay retired');
 console.log(`walls: ${state.walls.length} area ${Math.round(wallArea)} (no raster)`);
 
-// Layer measurement + mass/speed penetration: a 3-unit wood plate is crossed,
-// a 6-unit wood plate (above the 4-unit cap) always stops the same round.
+// Layer measurement + mass/speed penetration: penetration is paid for in
+// speed, so a thin plate is crossed and a plate whose cost exceeds the round's
+// remaining speed stops it.
 const plate = { id: 'plate', material: 'wood' as const, polygons: [[{ x: 0, y: 0 }, { x: 3, y: 0 }, { x: 3, y: 30 }, { x: 0, y: 30 }]] };
 const span = raySpanInWall(plate, { x: -5, y: 15 }, { x: 1, y: 0 });
 assert(Math.abs(span - 3) < 1e-6, `ray span should be 3, got ${span}`);
 const body = makeProjectileBody(1, 400);
 assert(crossLayer(body, 'wood', 3, 0.45) !== null, 'thin wood plate must be crossed');
+const thicker = makeProjectileBody(1, 400);
+assert(crossLayer(thicker, 'wood', 6, 0.45) !== null, 'a 6-unit timber plate is within reach of a 400 speed round');
 const thick = makeProjectileBody(1, 400);
-assert(crossLayer(thick, 'wood', 6, 0.45) === null, 'plate above the wood cap must stop the round');
+assert(crossLayer(thick, 'steel', 30, 0.78) === null, 'a plate whose speed cost exceeds the round stops it');
 assert(thick.squash === 1, 'a stopped round squashes against the plate');
-assert(THICKNESS_CAP.steel === 5 && THICKNESS_CAP.armor === 7, 'caps steel 5 / armor 7');
-console.log('layer span + cap: ok');
+const fast = makeProjectileBody(1, 400);
+assert(crossLayer(fast, 'steel', 6, 0.78) !== null, 'a thick steel plate is bored when the round can pay for it');
+console.log('layer span + kinetic budget: ok');
 
 // Wall coalescing must be an exact union: four touching cells become one wall
 // with the same area, while an air gap or a different material never merges.

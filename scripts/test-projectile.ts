@@ -22,13 +22,17 @@ assert(
   flying.width / flying.height > 3.2 && flying.width / flying.height < 4.4,
   `the shot is ~3.8:1, got ${flying.width}x${flying.height}`,
 );
-assert(flight.some((cell) => cell.part === 'orange' || cell.part === 'orangeLight'), 'the amber driving band must be part of the art');
+assert.equal(flying.width, 24, 'the sampled round is exactly 24 cells long');
+assert.equal(flying.height, 7, 'the sampled round is the 6-row casing plus the proud band');
+assert(flight.some((cell) => cell.part.startsWith('band')), 'the amber driving band must be part of the art');
 assert(!flight.some((cell) => (cell.part as string) === 'cyan'), 'the reference round has no cyan exhaust');
 assert(flying.width > flying.height, `in flight the shot points along X, got ${flying.width}x${flying.height}`);
-assert.equal(flight.filter((cell) => cell.part.startsWith('filler')).length, 0, 'filler stays inside an intact casing');
+assert.equal(flight.filter((cell) => cell.part === 'steel').length, 0, 'the steel core stays inside an intact casing');
+assert(flight.some((cell) => cell.part === 'cap'), 'the boat-tail cap is part of the art');
+assert(flight.some((cell) => cell.part === 'tip'), 'the nose point is part of the art');
 // The band sits at the base of the round, not mid-body: every band cell must be
 // behind the mid-point of the silhouette.
-const bandXs = flight.filter((cell) => cell.part.startsWith('orange')).map((cell) => cell.x);
+const bandXs = flight.filter((cell) => cell.part.startsWith('band')).map((cell) => cell.x);
 assert(bandXs.length > 0, 'the driving band is drawn');
 const minX = Math.min(...flight.map((cell) => cell.x));
 const maxX = Math.max(...flight.map((cell) => cell.x));
@@ -53,10 +57,10 @@ assert(crushedBounds.width < flying.width * 0.7, `squash must shorten the body (
 assert(crushedBounds.height > flying.height * 1.4, `squash must widen the body (${crushedBounds.height} vs ${flying.height})`);
 assert(
   crushedBounds.height / crushedBounds.width > 0.6,
-  `a crushed 3.8:1 shot must read as a pancake, got ${crushedBounds.width}x${crushedBounds.height}`,
+  `a crushed long shell must read as a pancake, got ${crushedBounds.width}x${crushedBounds.height}`,
 );
 assert(
-  crushed.filter((cell) => cell.part.startsWith('filler') || cell.part === 'steel').length > 10,
+  crushed.filter((cell) => cell.part === 'steel').length > 10,
   'heavy squash opens the casing and exposes the core',
 );
 assert.deepEqual(crushed, projectileCells(1, 0.5), 'deformation is deterministic');
@@ -120,29 +124,33 @@ assert(
   hardFace.shrapnel().length > softFace.shrapnel().length,
   `a harder face must tear off more casing (${hardFace.shrapnel().length} vs ${softFace.shrapnel().length})`,
 );
-const spreadOf = (crumple: number): number => {
+// Carried crumple is carried plastic damage, so a mangled casing sheds more of
+// itself than a pristine one under the same impact.
+const shedsOf = (crumple: number): number => {
   const hit = new ShellImpact({ speed: 640, mass: 9, material: 'steel', integrity: 0.65, seed: 991, hardness: 0.5, crumple });
   hit.stepTo(0.22);
-  const ys = hit.cells().map((cell) => cell.y);
-  return Math.max(...ys) - Math.min(...ys);
+  return hit.shrapnel().length;
 };
-assert(spreadOf(1) > spreadOf(0), `a crumpled casing must fold wider (${spreadOf(1)} vs ${spreadOf(0)})`);
+assert(shedsOf(1) > shedsOf(0), `a crumpled casing must shed more (${shedsOf(1)} vs ${shedsOf(0)})`);
 console.log(`shell lattice: ${atRest.width}x${atRest.height} -> ${deep.width}x${deep.height}, ${detachments} shrapnel cells, deterministic`);
 
 const built = buildStage(ALL_STAGES[0]!);
 const snapshot = cloneSnapshot({ grid: built.grid, wallState: built.wallState, core: built.core, relays: built.relays });
 
 // A plate stop: the shell gets a wreck timeline after the flight frames.
-const stop = simulateShotWalls(built.def, snapshot, { angleDeg: 26, power: 260, mode: 'arc', ammoId: 'aphe-hybrid' });
+// 26 deg / 200 aphe-hybrid runs out of energy on the first steel face, so it
+// squashes and stops there (a faster round bores through and keeps going).
+const stop = simulateShotWalls(built.def, snapshot, { angleDeg: 26, power: 200, mode: 'arc', ammoId: 'aphe-hybrid' });
 assert.equal(stop.result.impact?.kind, 'cell', 'opening shot must stop on the battery');
 assert(stop.result.wreck.length > 30, `wreck needs a full physical tail, got ${stop.result.wreck.length}`);
 const first = stop.result.wreck[0]!;
 const last = stop.result.wreck[stop.result.wreck.length - 1]!;
 assert(last.t > first.t + 500, 'wreck must last most of the replay');
 assert(last.y <= built.wallState!.groundY + 2, `wreck must settle on the ground, got y=${last.y}`);
-const stopAgain = simulateShotWalls(built.def, snapshot, { angleDeg: 26, power: 260, mode: 'arc', ammoId: 'aphe-hybrid' });
+const stopAgain = simulateShotWalls(built.def, snapshot, { angleDeg: 26, power: 200, mode: 'arc', ammoId: 'aphe-hybrid' });
 assert.equal(stopAgain.result.wreck.length, stop.result.wreck.length, 'wreck is deterministic');
 console.log(`plate wreck: ${stop.result.wreck.length} frames, settled at ${Math.round(last.x)},${Math.round(last.y)}`);
+assert(stop.result.wreck[0]!.shell && stop.result.wreck[0]!.shell!.age === 0, 'a direct stop starts the wreck lattice');
 
 // A round that penetrates and keeps flying must not leave a pancake on the
 // entry face. It bores a real hole (with chips) and keeps producing frames
@@ -161,9 +169,14 @@ assert.equal(pierce.result.impact, null, 'a shell that flies out of bounds must 
 assert.equal(pierce.result.damageEvents.some((event) => event.label === 'SABOT CORE'), false, 'a pass-through must not trigger the terminal phase at its entry');
 assert.equal(pierce.result.damageEvents.some((event) => event.label === 'PENETRATION'), true, 'the physical bore still remains');
 
-// The opposite case: a round that crosses one layer but is finally stopped by
-// another wall gets its wreck at the stop, not at the first contact.
-const partial = simulateShotWalls(built.def, snapshot, { angleDeg: 26, power: 260, mode: 'arc', ammoId: 'aphe-hybrid' });
+// The opposite case: a round that crosses layer after layer but is finally
+// stopped by another wall gets its wreck at the stop, not at the first
+// contact. The AP Solid Shot does exactly this: it bores through the timber
+// and brick skin and pancakes on the steel shield around the core, like the
+// reference damage frame where the round tears into the metal pillar.
+const partial = simulateShotWalls(built.def, snapshot, { angleDeg: 20, power: 300, mode: 'arc', ammoId: 'ap-solid-shot' });
+assert.equal(partial.result.impact?.material, 'steel', 'the penetrator must finally stop on the steel shield');
+assert(partial.result.effects.filter((event) => event.kind === 'penetrate').length > 1, 'the round must bore through several layers before it stops');
 assert(partial.result.effects.some((event) => event.kind === 'penetrate'), 'this shot must cross a layer before stopping');
 assert(partial.result.wreck.length > 30, 'a stopped round still gets its physical tail');
 assert(partial.result.impact && partial.result.firstContact, 'shot must report both contacts');
@@ -176,6 +189,19 @@ assert(
   `wreck must start at the terminal impact, got ${Math.round(wreckStart.x)},${Math.round(wreckStart.y)} vs ${Math.round(stopAt.x)},${Math.round(stopAt.y)}`,
 );
 console.log(`terminal wreck: entry @${Math.round(entry.x)},${Math.round(entry.y)} -> stop @${Math.round(stopAt.x)},${Math.round(stopAt.y)}`);
+
+// The round is a physical body, not a sprite on a parabola: once it touches
+// anything the shell lattice starts driving, so it visibly crushes while it
+// bores instead of flying through the wall untouched and snapping to a wreck
+// afterwards. The wreck picks the lattice up from the same age, unchanged.
+const bored = partial.result;
+const engaged = bored.frames.filter((frame) => frame.shell && frame.shell.age > 0);
+assert(engaged.length > 0, 'the lattice must engage before the round stops');
+assert(engaged[0]!.t < bored.wreck[0]!.t || engaged.length > 1, 'the shell crushes during penetration');
+const wreckAges = bored.wreck.map((frame) => frame.shell?.age ?? 0);
+assert(wreckAges.every((age) => age > 0), 'the wreck continues the lattice instead of restarting it');
+assert(wreckAges[0]! < wreckAges[wreckAges.length - 1]!, 'the wreck age advances');
+console.log(`shell contact engagement: ${engaged.length} frames crumpling before the stop, wreck age ${wreckAges[0]!.toFixed(2)} -> ${wreckAges[wreckAges.length - 1]!.toFixed(2)}`);
 
 // The same shell passes through a thin plate and keeps its flight; a core hit
 // consumes the casing, so it has no wreck.

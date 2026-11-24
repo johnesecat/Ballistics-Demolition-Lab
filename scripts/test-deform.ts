@@ -158,7 +158,9 @@ assert(growth[11]! < density([plate]) * 12, `twelve bores stay bounded, got ${gr
 // result is reproducible.
 const built = buildStage(ALL_STAGES[0]!);
 const snapshot = cloneSnapshot({ grid: built.grid, wallState: built.wallState, core: built.core, relays: built.relays });
-const input = { angleDeg: 26, power: 260, mode: 'arc' as const, ammoId: 'aphe-hybrid' };
+// The shot must actually stop on the steel face: a round that bores through and
+// leaves the range carries no detonation and leaves no heat blooms behind.
+const input = { angleDeg: 26, power: 200, mode: 'arc' as const, ammoId: 'aphe-hybrid' };
 const shot = simulateShotWalls(built.def, snapshot, input);
 const shotAgain = simulateShotWalls(built.def, snapshot, input);
 assert.deepEqual(shotAgain.result.final.wallState, shot.result.final.wallState, 'deformation survives into the replay payload deterministically');
