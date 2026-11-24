@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import type { ProjectileBody } from '../sim/projectile-body';
 import { ShellImpact } from '../sim/shell-pixels';
 import { heatColor } from '../sim/fracture';
-import { pristineShell, type ShellCell, type ShellPart } from '../sim/projectile-shell';
+import { XRAY_PART_COLORS, pristineShell, type ShellCell, type ShellPart } from '../sim/projectile-shell';
 import type { MaterialId } from '../materials';
 
 /**
@@ -52,6 +52,8 @@ export interface ShellRenderState {
   material?: MaterialId | null;
   /** Seconds since contact. */
   age: number;
+  /** Close to an object: the round shows the x-ray look and stays that way. */
+  xray?: boolean;
 }
 
 export class ProjectileView {
@@ -85,7 +87,7 @@ export class ProjectileView {
       // there is no visual jump the moment it touches a wall.
       this.sim = null;
       this.simKey = '';
-      this.drawCells(g, this.pristineCells(body), cell);
+      this.drawCells(g, this.pristineCells(body), cell, shell?.xray ?? false);
       return;
     }
 
@@ -113,7 +115,7 @@ export class ProjectileView {
     this.simAge = age;
 
     const cells = this.sim.cells();
-    this.drawCells(g, cells, cell);
+    this.drawCells(g, cells, cell, shell.xray ?? false);
 
     // Thermal pass: hot casing cells are painted from the blackbody ramp and
     // get an additive bloom, so a steel round that has just hit reads white-hot
@@ -137,7 +139,13 @@ export class ProjectileView {
     return PRISTINE;
   }
 
-  private drawCells(g: Phaser.GameObjects.Graphics, cells: ShellCell[], cell: number): void {
+  private drawCells(g: Phaser.GameObjects.Graphics, cells: ShellCell[], cell: number, xray: boolean): void {
+    // In x-ray the casing goes orange and the steel main projectile shows
+    // through it: a cell paints steel when the lattice says a steel cell is
+    // there (part === 'steel' after reveal, or a pristine cell carrying its
+    // `skin` -- the flag pristineShell leaves on every hidden steel cell).
+    const keyOf = (entry: ShellCell): ShellPart =>
+      xray && (entry.part === 'steel' || entry.skin !== undefined) ? 'steel' : entry.part;
     const rows = new Map<number, ShellCell[]>();
     for (const entry of cells) {
       const row = rows.get(entry.y);
@@ -149,10 +157,10 @@ export class ProjectileView {
       row.sort((a, b) => a.x - b.x);
       let start = 0;
       while (start < row.length) {
-        const part = row[start]!.part;
+        const key = keyOf(row[start]!);
         let end = start + 1;
-        while (end < row.length && row[end]!.part === part && row[end]!.x === row[end - 1]!.x + 1) end += 1;
-        g.fillStyle(SHELL_COLORS[part], 1);
+        while (end < row.length && keyOf(row[end]!) === key && row[end]!.x === row[end - 1]!.x + 1) end += 1;
+        g.fillStyle(xray ? XRAY_PART_COLORS[key] : SHELL_COLORS[key], 1);
         g.fillRect(row[start]!.x * cell, rowY * cell, (end - start) * cell, cell);
         start = end;
       }

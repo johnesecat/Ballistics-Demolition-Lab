@@ -24,6 +24,7 @@ import { EffectDirector } from './render/EffectDirector';
 import { DemolitionDirector } from './render/DemolitionDirector';
 import { ProjectileView } from './render/ProjectileView';
 import { makeProjectileBody } from './sim/projectile-body';
+import { nearestObstacleDistance } from './sim/projectile-shell';
 
 export interface AimState {
   angleDeg: number;
@@ -115,6 +116,8 @@ export class BattleScene extends Phaser.Scene {
   private demolition!: DemolitionDirector;
   private projectile!: Phaser.GameObjects.Image;
   private projectileView!: ProjectileView;
+  /** Close to an object, the round converts to x-ray and stays that way. */
+  private xrayLatched = false;
   private previewGraphics!: Phaser.GameObjects.Graphics;
   private trailGraphics!: Phaser.GameObjects.Graphics;
   private aimGuide!: Phaser.GameObjects.Graphics;
@@ -908,6 +911,7 @@ export class BattleScene extends Phaser.Scene {
       lastTrailTime: -1,
       coreVisual: ammo.flight.separation !== 'carrier',
     };
+    this.xrayLatched = false;
     this.tweens.timeScale = 1;
     this.matter.world.resume();
     this.matter.world.engine.timing.timeScale = 1;
@@ -1143,7 +1147,7 @@ export class BattleScene extends Phaser.Scene {
           body,
           34 * (ammo.flight.spriteScale ?? 1) * frame.scale,
           frame.shell
-            ? { ...frame.shell, age: frame.shell.age + (playback.elapsed - frame.t) / 1000 }
+            ? { ...frame.shell, age: frame.shell.age + (playback.elapsed - frame.t) / 1000, xray: this.xrayLatched }
             : undefined,
         );
         this.projectile.setVisible(false);
@@ -1151,6 +1155,17 @@ export class BattleScene extends Phaser.Scene {
       }
       this.projectile.setVisible(false);
       return;
+    }
+    // X-ray conversion: within reach of the structure the casing goes
+    // translucent in the reference (orange sleeve, bright steel core), and
+    // the round stays that way for the rest of the shot. Proximity is pure
+    // presentation; the solver already ran the same collision either way.
+    if (!this.xrayLatched) {
+      const walls = this.viewWallState?.walls ?? playback.result.start.wallState?.walls ?? [];
+      const core = playback.result.start.core;
+      if (nearestObstacleDistance({ x, y }, walls, { x: core.x, y: core.y, radius: core.radius }) < 80) {
+        this.xrayLatched = true;
+      }
     }
     this.lastProjectile = { x, y, angle };
     // Pixel round: the layered sprite replaces the old texture entirely. The
@@ -1169,7 +1184,11 @@ export class BattleScene extends Phaser.Scene {
       angle,
       body,
       34 * (ammo.flight.spriteScale ?? 1) * scale,
-      current.shell ? { ...current.shell } : undefined,
+      current.shell
+        ? { ...current.shell, xray: this.xrayLatched }
+        : this.xrayLatched
+          ? { squash: 0, crumple: 0, hardness: 0.5, speed: 600, mass: 9, integrity: 1, seed: 991, age: 0, xray: true }
+          : undefined,
     );
     // The legacy texture sprite must stay hidden: drawing both produced the
     // doubled, wrong-looking bullet reported in the recordings review.

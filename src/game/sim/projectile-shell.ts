@@ -1,28 +1,33 @@
 /**
- * Reference projectile: the AP Solid Shot, sampled from the three newest frames
- * (`IMG_4966.png` in flight, `IMG_4967.png` x-ray, `IMG_4968.png` damage).
+ * Reference projectile: the AP Solid Shot, rebuilt by reviewing the seven
+ * reference frames (IMG_4966/4967/4968 in flight/x-ray/damage, and the four
+ * newest IMG_4969/4971/4972/4974: far-zoom flight x3 plus the annotated
+ * two-outline frame). Hand-built to those four rather than sampled by code,
+ * which never matched the footage exactly.
  *
- * Sampling method (`scripts/sample_projectile.py`): the in-flight shell is
- * levelled by its own axis (-6.3 deg in that frame), then the silhouette is
- * quantised onto the 8.5 px pixel grid the footage is drawn on. That grid is
- * 24 cells long and 6 rows tall for the casing, with a seventh row where the
- * driving band is proud -- which is why this lattice is 24 x 6 and not the
- * stubby 23 x 6 of the old art. Row medians give the casing tones below (a
- * dark rim, the upper facet, a highlight, the body, the lower facet and the
- * dark belly); the amber driving band is two cells wide at the base and one
- * cell proud underneath, the dark boat-tail cap sits behind it, and the nose
- * tapers over the last third to a single pale tip cell.
+ * What the review shows, in flight (IMG_4969, horizontal): a long ogival dart,
+ * 24 cells long, whose boat-tail cap is the dark strip at the very base
+ * (columns 0-4), the amber driving band sits INSET at roughly 20-30% of the
+ * length (columns 5-6), then the pale blue-grey casing, a single dark flank
+ * rivet, and a smooth nose tapering over the last third to one pale tip cell.
+ * The dart reads exactly the same at any flight angle: the lattice rotates
+ * whole cells, never a scaled sprite, so the 0 deg look is the reference look.
  *
- * The x-ray frame shows what is inside the jacket: a solid steel core, a pointed
- * dart about four rows tall filling the middle of the body from 15% to 92% of
- * its length. Those cells carry `steel` under a `skin` that paints the casing
- * while it is intact, so the in-flight silhouette is pixel-identical to the
- * reference and the core only appears once the jacket above it tears away.
+ * The annotated frame (IMG_4974) splits the round into two outlines: the
+ * outer projectile shell (casing + band + cap) and the inner main projectile
+ * (the steel dart), with the orange sleeve between them. That is the x-ray
+ * look the round converts to when it gets close to an object (and stays):
+ * the casing goes orange, the steel core is bright, the shell nose pokes one
+ * cell past the core's point. The `steel` cells below are the main projectile;
+ * `skin` hides them under the casing in flight so the silhouette stays the
+ * flight frame's, and XRAY_PART_COLORS paints the conversion.
  *
  * The shell is modelled as a lattice of square cells. Every cell carries a mass
  * (area x casing density), so a crumple solves as a mass problem: light cells
  * fold and detach first, heavy cells keep driving forward.
  */
+
+import type { Wall } from './fracture';
 
 export type ShellPart =
   | 'rim'
@@ -51,17 +56,19 @@ export interface ShellCell {
 }
 
 /**
- * In-flight silhouette, sampled from IMG_4966. 24 cells long, 6 tall.
- * Columns: 0 boat-tail cap, 1-2 driving band, 3-23 casing.
- * Rows run y = -3 (top) .. 2 (bottom).
+ * In-flight silhouette, reviewed from IMG_4969/4971/4972 (flight) and
+ * IMG_4974 (annotated x-ray), 24 cells long, 6 tall.
+ * Columns: 0-4 boat-tail cap, 5-6 driving band, 7-23 casing ogive.
+ * Rows run y = -3 (top) .. 2 (bottom); the nose tip is the single cell at
+ * (23, 0) and the belly (bottom row) runs longest, as in the frames.
  */
 const ART: readonly string[] = [
-  '.AA################.....',
-  'CAA##################...',
-  'CAA###################..',
-  'CAA#####################',
-  'CAA###################..',
-  'CAA###############......',
+  'CCCCCAA#############....',
+  'CCCCCAA###############..',
+  'CCCCCAA################.',
+  'CCCCCAA#################',
+  'CCCCCAA################.',
+  'CCCCCAA#############....',
 ];
 
 const PART_OF: Record<string, ShellPart> = {
@@ -104,14 +111,16 @@ const CELL_MASS: Record<ShellPart, number> = {
 const ART_LEFT = -12;
 
 /**
- * Steel core from the x-ray frame: rows 1..4 of the jacket, tapering to a point
- * toward the nose. Columns are art indices (0..23); each range is inclusive.
+ * Main projectile (steel core) from the annotated x-ray frame (IMG_4974):
+ * four rows tall inside the jacket, starting just behind the driving band
+ * and tapering to a point one cell short of the shell's nose. Columns are art
+ * indices (0..23); each range is inclusive.
  */
 const CORE: ReadonlyArray<{ y: number; from: number; to: number }> = [
   { y: -2, from: 10, to: 19 },
-  { y: -1, from: 4, to: 22 },
-  { y: 0, from: 4, to: 22 },
-  { y: 1, from: 4, to: 20 },
+  { y: -1, from: 7, to: 22 },
+  { y: 0, from: 7, to: 22 },
+  { y: 1, from: 7, to: 20 },
 ];
 
 function buildBase(): ShellCell[] {
@@ -140,25 +149,26 @@ function buildBase(): ShellCell[] {
   // Flank rivet, 62% of the length down the lower highlight edge.
   const rivet = byKey.get(`${ART_LEFT + 15}|0`);
   if (rivet) rivet.part = 'rivet';
-  // The blue-grey highlight runs the full casing: row 2 of the sampled grid.
-  for (let col = 3; col <= 22; col += 1) {
+  // The blue-grey highlight runs the casing (only plain casing cells, so the
+  // cap and the band keep their own colours).
+  for (let col = 7; col <= 22; col += 1) {
     const cell = byKey.get(`${ART_LEFT + col}|-1`);
-    if (cell) cell.part = 'highlight';
+    if (cell && cell.part === 'body') cell.part = 'highlight';
   }
 
   // Driving-band shading, top to bottom: lit top facet, mid tone, dark base.
   for (let row = 0; row < ART.length; row += 1) {
-    for (const col of [1, 2]) {
+    for (const col of [5, 6]) {
       const cell = byKey.get(`${ART_LEFT + col}|${row - 3}`);
       if (!cell) continue;
       cell.part = row === 0 ? 'bandLight' : row >= 4 ? 'bandDark' : 'band';
     }
   }
 
-  // The band is proud: one extra cell of width at the base, so it reads as a
-  // driving band rather than a painted stripe.
-  cells.push({ x: ART_LEFT + 1, y: 3, part: 'bandDark', reveal: 0 });
-  cells.push({ x: ART_LEFT + 2, y: 3, part: 'bandDark', reveal: 0 });
+  // The band is proud: one extra cell of width under the driving band, so it
+  // reads as a band rather than a painted stripe.
+  cells.push({ x: ART_LEFT + 5, y: 3, part: 'bandDark', reveal: 0 });
+  cells.push({ x: ART_LEFT + 6, y: 3, part: 'bandDark', reveal: 0 });
 
   // Hide the steel core under the casing. The core never adds a cell: the
   // in-flight silhouette stays exactly the sampled one.
@@ -191,6 +201,60 @@ export function shellCellMass(cell: ShellCell): number {
 
 /** Total modelled mass of the pristine shell, in cell units. */
 export const SHELL_CELL_MASS = SHELL_BASE.reduce((sum, cell) => sum + shellCellMass(cell), 0);
+
+/**
+ * X-ray palette, reviewed from the annotated frame (IMG_4974) and the x-ray
+ * frame (IMG_4967): the casing becomes the orange sleeve (lit toward the top,
+ * dark toward the belly), the steel main projectile is bright pale steel, the
+ * cap goes dark bronze and the nose tip pales to light orange. The renderer
+ * paints these when the round has converted to x-ray near an object.
+ */
+export const XRAY_PART_COLORS: Record<ShellPart, number> = {
+  rim: 0xd68a47,
+  light: 0xca7c3e,
+  highlight: 0xd99050,
+  body: 0xc4763a,
+  dark: 0xb46830,
+  belly: 0x9a5a2a,
+  band: 0x9a6127,
+  bandLight: 0xa86c2e,
+  bandDark: 0x7c4d20,
+  cap: 0x5f4226,
+  tip: 0xe2a75e,
+  rivet: 0x4a3823,
+  steel: 0xb9c9d4,
+};
+
+/** Distance from a point to the nearest wall polygon edge (0 inside a wall). */
+export function nearestObstacleDistance(
+  point: { x: number; y: number },
+  walls: Wall[],
+  core?: { x: number; y: number; radius: number },
+): number {
+  let best = Infinity;
+  for (const wall of walls) {
+    for (const poly of wall.polygons) {
+      let inside = false;
+      for (let i = 0; i < poly.length; i += 1) {
+        const p = poly[i]!;
+        const q = poly[(i + 1) % poly.length]!;
+        const dx = q.x - p.x;
+        const dy = q.y - p.y;
+        const len2 = dx * dx + dy * dy;
+        const t = len2 > 0 ? Math.max(0, Math.min(1, ((point.x - p.x) * dx + (point.y - p.y) * dy) / len2)) : 0;
+        const d = Math.hypot(point.x - (p.x + dx * t), point.y - (p.y + dy * t));
+        if (d < best) best = d;
+        // Even-odd ray crossing for the inside test.
+        if (p.y > point.y !== q.y > point.y && point.x < ((q.x - p.x) * (point.y - p.y)) / (q.y - p.y || 1e-9) + p.x) {
+          inside = !inside;
+        }
+      }
+      if (inside) return 0;
+    }
+  }
+  if (core) best = Math.min(best, Math.max(0, Math.hypot(point.x - core.x, point.y - core.y) - core.radius));
+  return best;
+}
 
 /** Bounding box of a cell set, in whole cells. */
 export function shellBounds(cells: ShellCell[]): { width: number; height: number } {

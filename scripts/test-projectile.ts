@@ -44,6 +44,19 @@ assert(
 // is a single cell wide.
 const noseColumn = flight.filter((cell) => cell.x === maxX);
 assert.equal(noseColumn.length, 1, 'the nose tapers to a single cell');
+// Reviewed by eye from the four newest frames (IMG_4969 / 4971 / 4972 flight,
+// IMG_4974 annotated x-ray): the boat-tail cap leads the round (dark strip at
+// the very base), then the amber band sits INSET at roughly 20-30% of the
+// length (not flush with the base), then the long ogive casing. The old art
+// had the band flush at columns 1-2.
+const capXs = flight.filter((cell) => cell.part === 'cap').map((cell) => cell.x);
+assert(capXs.length >= 12, `the cap leads the round, got ${capXs.length} cap cells`);
+assert(Math.max(...capXs) < Math.min(...bandXs), 'the cap sits behind the driving band');
+assert(
+  Math.min(...bandXs) >= minX + (maxX - minX) * 0.15,
+  `the band is inset from the base, starts at ${Math.min(...bandXs)} of ${minX}..${maxX}`,
+);
+assert(Math.min(...capXs) === minX, 'the cap is the rearmost thing on the round');
 assert(flight.every((cell) => Number.isInteger(cell.x) && Number.isInteger(cell.y)), 'every cell is snapped to whole pixels');
 assert.equal(new Set(flight.map((cell) => `${cell.x}|${cell.y}`)).size, flight.length, 'no duplicate cells');
 
@@ -133,6 +146,29 @@ const shedsOf = (crumple: number): number => {
 };
 assert(shedsOf(1) > shedsOf(0), `a crumpled casing must shed more (${shedsOf(1)} vs ${shedsOf(0)})`);
 console.log(`shell lattice: ${atRest.width}x${atRest.height} -> ${deep.width}x${deep.height}, ${detachments} shrapnel cells, deterministic`);
+
+// X-ray conversion (IMG_4974 / IMG_4967): once the round gets close to an
+// object it converts to the x-ray look and stays that way. The x-ray palette
+// is the orange jacket with a bright steel core, read off the annotated frame.
+const { XRAY_PART_COLORS, nearestObstacleDistance } = await import('../src/game/sim/projectile-shell');
+const xr = (part: keyof typeof XRAY_PART_COLORS) => XRAY_PART_COLORS[part];
+const redOf = (c: number) => (c >> 16) & 0xff;
+const blueOf = (c: number) => c & 0xff;
+assert(redOf(xr('body')) > blueOf(xr('body')), 'x-ray casing is the orange sleeve, not steel blue');
+assert(redOf(xr('rim')) > redOf(xr('body')), 'x-ray orange lightens toward the upper sleeve');
+assert(redOf(xr('belly')) < redOf(xr('body')), 'x-ray orange darkens toward the belly');
+assert(redOf(xr('steel')) > 150 && Math.abs(((xr('steel') >> 8) & 0xff) - redOf(xr('steel'))) < 25, 'x-ray core is bright pale steel');
+assert(redOf(xr('cap')) < 120, 'x-ray cap is dark bronze, not amber');
+// Proximity: distance from a point to the nearest wall edge / core surface.
+const fakeWalls = [{ id: 'w', material: 'steel' as const, polygons: [[{ x: 100, y: 100 }, { x: 140, y: 100 }, { x: 140, y: 140 }, { x: 100, y: 140 }]] }];
+assert(Math.abs(nearestObstacleDistance({ x: 60, y: 120 }, fakeWalls) - 40) < 1e-6, '40 units from the wall face');
+assert(nearestObstacleDistance({ x: 500, y: 500 }, fakeWalls) > 300, 'far from the wall stays far');
+assert(Math.abs(nearestObstacleDistance({ x: 120, y: 120 }, fakeWalls) - 0) < 1e-6, 'inside a wall is zero (contact)');
+assert(
+  nearestObstacleDistance({ x: 0, y: 0 }, [], { x: 100, y: 0, radius: 30 }) === 70,
+  'the core counts as an object at its surface',
+);
+console.log('xray palette + proximity: orange sleeve, bright core, wall distance exact');
 
 const built = buildStage(ALL_STAGES[0]!);
 const snapshot = cloneSnapshot({ grid: built.grid, wallState: built.wallState, core: built.core, relays: built.relays });

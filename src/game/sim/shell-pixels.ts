@@ -284,7 +284,12 @@ export class ShellImpact {
         spring.rest += (len - spring.rest) * give;
         a.damage = Math.min(1, a.damage + excess * dt * 9);
         b.damage = Math.min(1, b.damage + excess * dt * 9);
-        spring.damage += excess * dt * (12 + (1 - this.material.strength) * 26);
+        // The casing is the same steel whatever it hits: the face decides how
+        // much strain it sees (a hard face concentrates it, a soft one spreads
+        // it) through the spring stiffness, so the damage budget per unit
+        // strain is face-independent -- otherwise a soft face would shatter
+        // the shell faster than a plate, which is backwards.
+        spring.damage += excess * dt * 12;
         if (spring.damage >= 1) spring.broken = true;
       }
     }
