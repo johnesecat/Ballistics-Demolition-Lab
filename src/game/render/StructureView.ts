@@ -52,6 +52,11 @@ export class StructureView {
   private focusWall: string | null = null;
   private bodiesPainted = -1;
   private thermal = false;
+  /** Transient plate vibration: a heated focused wall rings (damped sine). */
+  private wobbleAmp = 0;
+  private wobbleT0 = 0;
+  private wobblePhase = 0;
+  private lastWallsRef: WallState | null = null;
   private thermalGlow: Phaser.GameObjects.Graphics;
 
   private scene: Phaser.Scene;
@@ -161,7 +166,10 @@ export class StructureView {
 
   /** Solid polygons + thermal stain + fragment cubes. */
   setWalls(state: WallState | null, bodies: FragmentBody[] = []): void {
+    const freshPhase = state !== this.lastWallsRef;
     this.lastWalls = state;
+    this.lastWallsRef = state;
+    if (freshPhase) this.maybeRingFocusedWall(state);
     // The cinematic asks for a wall frame on every projectile tick, but the
     // polygons only change on a fracture. Re-baking the whole RenderTexture per
     // frame would add a full-screen GPU pass during exactly the busiest scene.
@@ -170,6 +178,52 @@ export class StructureView {
     this.thermalGlow.clear();
     if (state) this.drawHeatField(state);
     this.setBodies(bodies, true);
+  }
+
+  /**
+   * Start the focused plate ringing when a fresh phase leaves it hot. The
+   * wobble is presentation only: collision, support and damage all read the
+   * bent solver geometry, which does not oscillate. Amplitude is capped at a
+   * couple of world units so it reads as vibration, never as displacement.
+   */
+  private maybeRingFocusedWall(state: WallState | null): void {
+    if (!state || !this.focusWall) return;
+    const wall = state.walls.find((w) => w.id === this.focusWall);
+    if (!wall) return;
+    let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
+    for (const poly of wall.polygons) {
+      for (const p of poly) {
+        minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+        maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+      }
+    }
+    let hot = 0;
+    for (const region of state.heat) {
+      const d = Math.max(minX - region.x, region.x - maxX, minY - region.y, region.y - maxY, 0);
+      if (d <= region.radius + 25) hot = Math.max(hot, region.heat);
+    }
+    if (hot < 0.3) { this.wobbleAmp = 0; return; }
+    this.wobbleAmp = Math.min(2.2, (hot - 0.3) * 3);
+    this.wobbleT0 = this.scene.time.now;
+    // Deterministic phase from the wall id, so the replay is stable.
+    let h = 0;
+    for (const ch of wall.id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    this.wobblePhase = (h % 1000) / 1000 * Math.PI * 2;
+  }
+
+  /** Per-frame vibration of the focused wall: decaying damped sine. */
+  update(time: number): void {
+    if (this.wobbleAmp <= 0) return;
+    const dt = Math.max(0, (time - this.wobbleT0) / 1000);
+    const env = Math.exp(-dt / 0.42);
+    const amp = this.wobbleAmp * env;
+    if (amp < 0.04) {
+      this.wobbleAmp = 0;
+      this.detail.setPosition(0, 0);
+      return;
+    }
+    const v = amp * Math.sin(dt * Math.PI * 2 * 13 + this.wobblePhase);
+    this.detail.setPosition(v * 0.6, v);
   }
 
   /** Cheap identity of the visible geometry: fragmenting always changes a

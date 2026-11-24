@@ -170,6 +170,26 @@ assert(
 );
 console.log('xray palette + proximity: orange sleeve, bright core, wall distance exact');
 
+// Playback pacing: full speed in open flight, a crawl while the round bores
+// (so the crush reads in real time), deepest right on the terminal hit.
+const { playbackTimeScale: pts } = await import('../src/game/sim/playback-scale');
+const near = (got: number, want: number, what: string) =>
+  assert(Math.abs(got - want) < 1e-6, `${what}, got ${got} want ${want}`);
+near(pts(100, null, null), 1, 'no impact, no pacing');
+near(pts(0, 900, 1500), 1, 'full speed far from the impact');
+near(pts(1000, 900, 1500), 0.5, 'bore pacing dominates the approach ramp mid-bore');
+near(pts(1490, 900, 1500), 0.25, '0.25x just before the hit');
+near(pts(1520, 900, 1500), 0.18, '0.18x right on the hit');
+near(pts(1000, null, 1500), 0.85, 'approach ramp works without a bore');
+// A mid-bore moment (contact at 900, impact at 1500, elapsed 1000) is inside
+// the approach window anyway; use a long bore (contact 200, impact 1500) so
+// mid-bore is outside the approach window and only the bore can slow it.
+near(pts(400, 200, 1500), 0.5, 'mid-bore crawls at 0.5x so the crush reads');
+near(pts(900, 200, 1500), 0.5, 'bore pacing holds until the terminal impact');
+assert(pts(2000, 900, 1500) < 1, 'wreck phase eases back up');
+near(pts(2400, 900, 1500), 1, 'settles back to full speed');
+console.log('playback pacing: approach/bore/impact slowdowns verified');
+
 const built = buildStage(ALL_STAGES[0]!);
 const snapshot = cloneSnapshot({ grid: built.grid, wallState: built.wallState, core: built.core, relays: built.relays });
 

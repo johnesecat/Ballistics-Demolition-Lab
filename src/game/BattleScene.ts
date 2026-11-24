@@ -25,6 +25,7 @@ import { DemolitionDirector } from './render/DemolitionDirector';
 import { ProjectileView } from './render/ProjectileView';
 import { makeProjectileBody } from './sim/projectile-body';
 import { nearestObstacleDistance } from './sim/projectile-shell';
+import { playbackTimeScale } from './sim/playback-scale';
 
 export interface AimState {
   angleDeg: number;
@@ -362,19 +363,12 @@ export class BattleScene extends Phaser.Scene {
    */
   private cinematicTimeScale(playback: Playback): number {
     if (!this.cine.active || !playback.result.impact) return 1;
-    const togo = this.cine.impactT - playback.elapsed;
-    // The footage eases into a brief 2.5–4x slow-motion at contact, not a
-    // 10x freeze: the old 0.1x hold stretched a 150 ms beat over 1.5 s and made
-    // the impact look stuck.
-    if (togo > 0) {
-      if (togo < 260) return 0.38;
-      if (togo < 560) return 0.38 + 0.62 * ((togo - 260) / 300);
-      return 1;
-    }
-    const since = -togo;
-    if (since < 120) return 0.22;
-    if (since < 660) return 0.22 + 0.78 * ((since - 120) / 540);
-    return 1;
+    // Contact time = the first frame whose shell lattice is engaged, so the
+    // replay crawls through the bore itself, not only at the terminal hit.
+    const frames = playback.result.frames;
+    const contactIdx = frames.findIndex((f) => f.shell && f.shell.age > 0);
+    const contactT = contactIdx >= 0 ? frames[contactIdx]!.t : null;
+    return playbackTimeScale(playback.elapsed, contactT, this.cine.impactT);
   }
 
   private updateCineCamera(delta: number): void {
@@ -1264,6 +1258,7 @@ export class BattleScene extends Phaser.Scene {
       if (this.mode === 'aiming') this.fragmentBodies = this.viewBodies;
     }
     if (this.effects) this.effects.update(time);
+    this.structure.update(time);
     void this.debug;
   }
 
