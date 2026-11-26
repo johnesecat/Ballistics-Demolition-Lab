@@ -106,23 +106,34 @@ function scanCore(stage: BuiltStage, current: StageSnapshot): { input: ShotInput
   // survivor is still decided by the authoritative shot simulation below.
   const walls = current.wallState?.walls ?? getWallState(current).walls;
   const modes: FireMode[] = ['straight', 'arc'];
+  // A full body solve is ~18 ms. A bunker can put thousands of probes on the
+  // core line, so simulate the closest lines first and cap the spend per shell.
+  const SIM_CAP = 80;
   for (const ammoId of CORE_AMMO) {
     const ammo = AMMO_BY_ID.get(ammoId);
     if (!ammo) continue;
     const choice = ammo.choice?.defaultOption;
     for (const mode of modes) {
+      const candidates: Array<{ input: ShotInput; rank: number }> = [];
       for (let angle = 4; angle <= 84; angle += 1) {
         for (let power = 120; power <= 441; power += 10) {
           const input: ShotInput = { angleDeg: angle, power, mode, ammoId, choiceId: choice };
           const preview = probeAim(stage.def, current, input, { walls, relays: false });
-          const nearCore = preview.firstContact
-            ? Math.hypot(preview.firstContact.x - current.core.x, preview.firstContact.y - current.core.y) < 130
+          const contact = preview.firstContact;
+          const nearCore = contact
+            ? Math.hypot(contact.x - current.core.x, contact.y - current.core.y) < 130
             : false;
           if (!preview.willHitCore && !nearCore) continue;
-          const result = simulateShot(stage.def, current, input);
-          if (result.coreDamage < 1) continue;
-          if (!best || result.coreDamage > best.result.coreDamage) best = { input, result };
+          // Free core lines first, then the contacts closest to the core.
+          const rank = (preview.willHitCore ? 0 : 10000) + (contact ? Math.hypot(contact.x - current.core.x, contact.y - current.core.y) : 0);
+          candidates.push({ input, rank });
         }
+      }
+      candidates.sort((a, b) => a.rank - b.rank);
+      for (const candidate of candidates.slice(0, SIM_CAP)) {
+        const result = simulateShot(stage.def, current, candidate.input);
+        if (result.coreDamage < 1) continue;
+        if (!best || result.coreDamage > best.result.coreDamage) best = { input: candidate.input, result };
       }
     }
   }
@@ -218,6 +229,7 @@ for (const def of stagesToCheck) {
   const built = buildStage(def);
   const unsupported = built.wallState ? detachUnsupported(built.wallState.walls, built.groundY).detached.length : 0;
   const initial = snapshotOf(built);
+  console.error(`… solving ${def.id}`);
   const result = solve(built);
   const status = result.success ? 'OK' : 'FAIL';
   if (!result.success) failed += 1;

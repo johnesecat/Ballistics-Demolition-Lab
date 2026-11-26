@@ -488,8 +488,17 @@ The round is no longer a sprite with a pre-baked wreck. Design:
       increase the dent, wood deforms more than steel, carve removes exactly
       one pixel, plus the full existing suite. `tsc` / `npm test` / `build`
       green; `bench:body` 19.4 ms median / 77.6 ms phone estimate (budget 80).
-- [x] Campaign validator runs on the rebalanced core health (log in
-      `artifacts/verify/validate-final.log`).
+- [x] Campaign validator on the rebalanced core health: **15/15 stages
+      validated as solvable** (`artifacts/verify/validate-final.log`). After
+      the probe filter, the harness simulates the 80 nearest core lines per
+      shell/mode: destroy-core clears in 2–3 APDS shots (cores 210→495 HP),
+      destroy-relay in one wide-jet (×3), expose-core in one shell (HE blast
+      ×2, quake ×1). `unsupported=0` on every generated stage.
+- [x] Guide ends at the shot's first contact (the solver's trace also carries
+      the resting centre, which used to be joined back to the entry), and the
+      expose-core warning only fires when that contact is cover around the
+      core. Live check: AH-02 20°/300 shows "CLEAR LINE TO CORE" and the dots
+      stop on the roof where the replay's round enters.
 
 ### 60 fps reference comparison (impact frames `artifacts/ref/imp_a..c`)
 

@@ -181,6 +181,14 @@ After the shot, `deformationAt()` samples the permanent displacement field and
 `applyCarves()` bends the surviving wall vertices around the hole, so the rim
 keeps the shape the pixels were pushed into. Detached cells become the chips.
 
-Cost: 20.9 ms median resolve (was 19.5 ms), 83.6 ms ×4 phone estimate; with a
-22-unit patch and an awake-only integrator the guard passes at 19.4 ms /
-77.6 ms. `npm run bench:body` exits 0.
+Cost: the final bench is 17.7 ms median resolve / 70.8 ms ×4 phone estimate;
+repeat runs range 17–22 ms and 71–84 ms, inside the 80 ms guard. The first
+soft-body cut was 20.9 ms / 83.6 ms; the 22-unit patch and awake-only
+integrator brought it back. `npm run bench:body` exits 0.
+
+The campaign validator now filters candidates with `probeAim()` (a full body
+solve per aim is ~18 ms, too slow for a 75k-point sweep) and simulates the 80
+core-line candidates nearest the core per shell and mode. It cleared all
+nine destroy-core batteries in 2–3 APDS shots, all three relay batteries in
+one wide-jet, and all three expose-core batteries in one shell (two HE
+blasts, one quake). Full log: `artifacts/verify/validate-final.log`.
