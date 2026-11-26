@@ -181,6 +181,8 @@ export interface ShotResult {
   effects: EffectEvent[];
   damageEvents: DamageEvent[];
   firstContact: ImpactInfo | null;
+  /** Flight time (ms) when firstContact happened; 0 when nothing was hit. */
+  firstContactT: number;
   impact: ImpactInfo | null;
   coreDamage: number;
   coreDestroyed: boolean;

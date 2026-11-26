@@ -112,6 +112,7 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
   const flightBodies: Array<FragmentBody & { spawnT: number }> = [];
   let impact: ImpactInfo | null = null;
   let firstContact: ImpactInfo | null = null;
+  let firstContactT = 0;
   let impactTime = 0;
   let simTime = 0;
   let coreDamage = 0;
@@ -144,6 +145,7 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
       impactTime = simTime - dt * (1 - coreT);
       impact = { x: hx, y: hy, nx: -vx * invSpeed, ny: -vy * invSpeed, kind: 'core', contactX: hx, contactY: hy };
       firstContact = impact;
+      firstContactT = impactTime;
       coreDamage += 40 * (ammo.ratings?.impact ?? 1);
       effects.push({ t: impactTime * 1000, kind: 'core-hit', x: core.x, y: core.y, radius: core.radius });
       break;
@@ -157,7 +159,10 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
         kind: 'cell', material: contact.material,
         contactX: cx, contactY: cy, wallId: contact.wallId,
       };
-      if (!firstContact) firstContact = { ...impact };
+      if (!firstContact) {
+        firstContact = { ...impact };
+        firstContactT = simTime;
+      }
       impactTime = simTime;
       effects.push({ t: simTime * 1000, kind: 'impact', x: cx, y: cy, family: ammo.vfx.family, angle: Math.atan2(contact.ny, contact.nx), material: contact.material });
 
@@ -285,7 +290,10 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
       impactTime = simTime - dt * (1 - t);
       impact = { x: gx, y: floor, nx: 0, ny: -1, kind: 'ground', contactX: gx, contactY: floor };
       if (contactAt < 0) contactAt = simTime;
-      if (!firstContact) firstContact = impact;
+      if (!firstContact) {
+        firstContact = impact;
+        firstContactT = impactTime;
+      }
       effects.push({ t: impactTime * 1000, kind: 'impact', x: gx, y: floor, family: ammo.vfx.family, angle: Math.PI / 2 });
 
       // The seabed is solid too: the same solver drops the round onto it.
@@ -401,7 +409,7 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
     phaseWallStates,
     bodies: timedBodies,
     frames, track, effects, damageEvents,
-    firstContact, impact,
+    firstContact, firstContactT, impact,
     coreDamage, coreDestroyed: core.destroyed,
     relaysDestroyed, cellDamage: cellDamageArea,
     durationMs,

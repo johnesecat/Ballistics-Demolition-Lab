@@ -116,7 +116,7 @@ function scanCore(stage: BuiltStage, current: StageSnapshot): { input: ShotInput
           const input: ShotInput = { angleDeg: angle, power, mode, ammoId, choiceId: choice };
           const preview = probeAim(stage.def, current, input, { walls, relays: false });
           const nearCore = preview.firstContact
-            ? Math.hypot(preview.firstContact.x - current.core.x, preview.firstContact.y - current.core.y) < 220
+            ? Math.hypot(preview.firstContact.x - current.core.x, preview.firstContact.y - current.core.y) < 130
             : false;
           if (!preview.willHitCore && !nearCore) continue;
           const result = simulateShot(stage.def, current, input);
@@ -132,6 +132,7 @@ function scanCore(stage: BuiltStage, current: StageSnapshot): { input: ShotInput
 function scanExpose(stage: BuiltStage, current: StageSnapshot): { input: ShotInput; result: ShotResult } | null {
   let best: { input: ShotInput; result: ShotResult; after: number } | null = null;
   const coverBefore = snapshotCoreCoverFraction(current);
+  const walls = current.wallState?.walls ?? getWallState(current).walls;
   for (const ammoId of BLAST_AMMO) {
     const ammo = AMMO_BY_ID.get(ammoId);
     if (!ammo) continue;
@@ -140,6 +141,10 @@ function scanExpose(stage: BuiltStage, current: StageSnapshot): { input: ShotInp
       for (let angle = 4; angle <= 55; angle += 2) {
         for (const power of [180, 240, 300, 350, 400, 430]) {
           const input: ShotInput = { angleDeg: angle, power, mode, ammoId, choiceId: choice };
+          // Only a shot that reaches the cover around the core can expose it.
+          const probe = probeAim(stage.def, current, input, { walls, relays: false });
+          if (!probe.firstContact) continue;
+          if (Math.hypot(probe.firstContact.x - current.core.x, probe.firstContact.y - current.core.y) > 260) continue;
           const result = simulateShot(stage.def, current, input);
           if (result.final.core.destroyed) continue;
           const after = snapshotCoreCoverFraction(result.final);
@@ -155,6 +160,10 @@ function scanExpose(stage: BuiltStage, current: StageSnapshot): { input: ShotInp
 
 function scanRelay(stage: BuiltStage, current: StageSnapshot): { input: ShotInput; result: ShotResult } | null {
   let best: { input: ShotInput; result: ShotResult; remaining: number } | null = null;
+  const walls = current.wallState?.walls ?? getWallState(current).walls;
+  const target = current.relays.find((relay) => relay.alive);
+  const targetX = target ? target.cells.reduce((sum, cell) => sum + current.grid.originX + (cell.col + 0.5) * current.grid.tile, 0) / Math.max(1, target.cells.length) : null;
+  const targetY = target ? target.cells.reduce((sum, cell) => sum + current.grid.originY + (cell.row + 0.5) * current.grid.tile, 0) / Math.max(1, target.cells.length) : null;
   for (const ammoId of RELAY_AMMO) {
     const ammo = AMMO_BY_ID.get(ammoId);
     if (!ammo) continue;
@@ -163,6 +172,12 @@ function scanRelay(stage: BuiltStage, current: StageSnapshot): { input: ShotInpu
       for (let angle = 4; angle <= 70; angle += 2) {
         for (const power of [180, 240, 300, 350, 400, 430]) {
           const input: ShotInput = { angleDeg: angle, power, mode, ammoId, choiceId: choice };
+          // A shot that first touches far from the pod cannot reach it.
+          const probe = probeAim(stage.def, current, input, { walls, relays: false });
+          const nearRelay = probe.firstContact && targetX !== null && targetY !== null
+            ? Math.hypot(probe.firstContact.x - targetX, probe.firstContact.y - targetY) < 260
+            : false;
+          if (!nearRelay && !probe.willHitRelay) continue;
           const result = simulateShot(stage.def, current, input);
           const remaining = result.final.relays[0]?.alive ? 1 : 0;
           if (!best || remaining < best.remaining) best = { input, result, remaining };

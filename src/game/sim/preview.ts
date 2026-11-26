@@ -70,15 +70,19 @@ export function previewShot(def: StageDefinition, snapshot: StageSnapshot, input
   const ammo = getAmmo(input.ammoId);
   const outcome = simulateShotWalls(def, snapshot, input, { damage: false });
   const result = outcome.result;
-  const samples = result.tracePath.map((point) => ({ ...point }));
+  // The guide is the flight up to the first contact. The solver's trace also
+  // carries the body's resting centre after the stop; joining that back to the
+  // entry point drew a line the round never travelled.
+  const cutT = result.firstContact ? result.firstContactT + 1 : Infinity;
+  const samples = result.tracePath.filter((point) => point.t <= cutT).map((point) => ({ ...point }));
   if (samples.length === 0) {
     const muzzle = muzzlePosition(input.angleDeg);
     samples.push({ x: muzzle.x, y: muzzle.y, t: 0 });
   }
-  if (result.impact) {
+  if (result.firstContact) {
     const last = samples[samples.length - 1]!;
-    if (Math.hypot(last.x - result.impact.x, last.y - result.impact.y) > 1) {
-      samples.push({ x: result.impact.x, y: result.impact.y, t: last.t });
+    if (Math.hypot(last.x - result.firstContact.x, last.y - result.firstContact.y) > 0.5) {
+      samples.push({ x: result.firstContact.x, y: result.firstContact.y, t: result.firstContactT });
     }
   }
 
@@ -106,7 +110,14 @@ export function previewShot(def: StageDefinition, snapshot: StageSnapshot, input
   const target = objectivePoint(def, snapshot);
   if (def.objective.kind === 'expose-core') {
     const state = result.start.wallState ?? getWallState(snapshot);
-    coverWarning = coreCoverFraction(state, snapshot.core) > (def.objective.threshold ?? 0.3);
+    const coverLeft = coreCoverFraction(state, snapshot.core) > (def.objective.threshold ?? 0.3);
+    // Only warn when this shot actually meets cover around the core. A miss
+    // leaves the cover bar high, but nothing was hit.
+    coverWarning =
+      coverLeft &&
+      !willHitCore &&
+      result.firstContact?.kind === 'cell' &&
+      Math.hypot(result.firstContact.x - snapshot.core.x, result.firstContact.y - snapshot.core.y) < 240;
   } else if (target && !willHitCore && result.impact && result.impact.kind === 'cell') {
     const dx = target.x - result.impact.x;
     const dy = target.y - result.impact.y;
