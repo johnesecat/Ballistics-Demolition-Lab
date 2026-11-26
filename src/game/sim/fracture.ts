@@ -278,6 +278,181 @@ export function fractureWallBand(wall: Wall, from: Point, to: Point, width: numb
   };
 }
 
+/** One removed pixel, in world-space cell coordinates. */
+export interface PixelRect { x0: number; y0: number; x1: number; y1: number }
+
+/** Vertical span of contiguous carved cells in one row. */
+function pixelRects(cells: readonly { x: number; y: number }[], size: number): PixelRect[] {
+  const rows = new Map<number, number[]>();
+  for (const cell of cells) {
+    const row = Math.floor(cell.y / size);
+    const col = Math.floor(cell.x / size);
+    const list = rows.get(row);
+    if (list) list.push(col);
+    else rows.set(row, [col]);
+  }
+  const rects: PixelRect[] = [];
+  let open = new Map<string, PixelRect>();
+  for (const row of [...rows.keys()].sort((a, b) => a - b)) {
+    const cols = [...new Set(rows.get(row)!)].sort((a, b) => a - b);
+    const runs: Array<{ c0: number; c1: number }> = [];
+    for (const col of cols) {
+      const last = runs[runs.length - 1];
+      if (last && col === last.c1 + 1) last.c1 = col;
+      else runs.push({ c0: col, c1: col });
+    }
+    const next = new Map<string, PixelRect>();
+    for (const run of runs) {
+      const key = `${run.c0}|${run.c1}`;
+      const prev = open.get(key);
+      // A run that continues directly below the previous row is the same
+      // rectangle: this is what stops a bore becoming one rect per pixel row.
+      if (prev) {
+        prev.y1 = (row + 1) * size;
+        next.set(key, prev);
+      } else {
+        next.set(key, { x0: run.c0 * size, y0: row * size, x1: (run.c1 + 1) * size, y1: (row + 1) * size });
+      }
+    }
+    for (const [key, rect] of open) if (!next.has(key)) rects.push(rect);
+    open = next;
+  }
+  for (const rect of open.values()) rects.push(rect);
+  return rects.sort((a, b) => a.y0 - b.y0 || a.x0 - b.x0);
+}
+
+/** True when the axis-aligned bounds do not overlap. */
+function boxMisses(polygon: Polygon, r: PixelRect): boolean {
+  let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
+  for (const p of polygon) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  return minX >= r.x1 || maxX <= r.x0 || minY >= r.y1 || maxY <= r.y0;
+}
+
+/** Convex polygon minus one axis-aligned rectangle, as up to four convex
+ * pieces that tile the surviving area exactly (no invented removal). */
+function subtractPixelRect(polygon: Polygon, r: PixelRect): Polygon[] {
+  if (boxMisses(polygon, r)) return [polygon.map((p) => ({ ...p }))];
+  const below = clip(polygon, 'y', r.y0, true);
+  const aboveBand = clip(polygon, 'y', r.y0, false);
+  const above = clip(aboveBand, 'y', r.y1, false);
+  const band = clip(aboveBand, 'y', r.y1, true);
+  const left = clip(band, 'x', r.x0, true);
+  const right = clip(band, 'x', r.x1, false);
+  return [below, above, left, right].filter((piece) => piece.length >= 3 && polygonArea(piece) > 1e-6);
+}
+
+/** Axis-aligned view of a rectangle polygon, or null. */
+function exactRect(poly: Polygon): PixelRect | null {
+  if (poly.length !== 4) return null;
+  const xs = [...new Set(poly.map((p) => p.x))];
+  const ys = [...new Set(poly.map((p) => p.y))];
+  if (xs.length !== 2 || ys.length !== 2) return null;
+  return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+}
+
+/** Merge rectangles that share a full edge, so an exact hole does not leave
+ * one polygon per pixel row. Non-rectangular (sloped) pieces pass through. */
+function mergeRectPieces(pieces: Polygon[]): Polygon[] {
+  const rects: PixelRect[] = [];
+  const others: Polygon[] = [];
+  for (const piece of pieces) {
+    const rect = exactRect(piece);
+    if (rect) rects.push(rect);
+    else others.push(piece);
+  }
+  let changed = true;
+  while (changed) {
+    changed = false;
+    outer: for (let i = 0; i < rects.length; i += 1) {
+      const a = rects[i]!;
+      for (let j = i + 1; j < rects.length; j += 1) {
+        const b = rects[j]!;
+        if (a.x0 === b.x0 && a.x1 === b.x1 && (a.y1 === b.y0 || b.y1 === a.y0)) {
+          a.y0 = Math.min(a.y0, b.y0); a.y1 = Math.max(a.y1, b.y1);
+          rects.splice(j, 1); changed = true; break outer;
+        }
+        if (a.y0 === b.y0 && a.y1 === b.y1 && (a.x1 === b.x0 || b.x1 === a.x0)) {
+          a.x0 = Math.min(a.x0, b.x0); a.x1 = Math.max(a.x1, b.x1);
+          rects.splice(j, 1); changed = true; break outer;
+        }
+      }
+    }
+  }
+  return [
+    ...rects.map((r): Polygon => [{ x: r.x0, y: r.y0 }, { x: r.x1, y: r.y0 }, { x: r.x1, y: r.y1 }, { x: r.x0, y: r.y1 }]),
+    ...others,
+  ];
+}
+
+/**
+ * Remove exactly the pixels the projectile destroyed from a wall.
+ *
+ * This replaces the old oriented-rectangle "penetration band", which cut a
+ * rotated square through material the round never touched. The removed region
+ * here is the union of the 2-unit collision cells the body actually carved, so
+ * the hole is derived from the solver's mass, material and kinetic energy, not
+ * from a stamp: entry lip, taper, bore and exit are whatever the lattice took.
+ * Removed area returns as chips; surviving area is preserved exactly.
+ */
+export function subtractPixelCells(
+  wall: Wall,
+  cells: readonly { x: number; y: number }[],
+  size: number,
+  fragmentSize: number,
+): FractureResult {
+  if (!Number.isFinite(size) || size <= 0 || !Number.isFinite(fragmentSize) || fragmentSize <= 0) {
+    throw new RangeError('Invalid pixel subtraction');
+  }
+  const rects = pixelRects(cells, size);
+  if (rects.length === 0) return { wall: { ...wall, polygons: wall.polygons.map((p) => p.map((pt) => ({ ...pt }))) }, fragments: [] };
+  const originalArea = wall.polygons.reduce((sum, polygon) => sum + polygonArea(polygon), 0);
+  let polygons = wall.polygons.map((p) => p.map((pt) => ({ ...pt })));
+  const removed: Polygon[] = [];
+  for (const rect of rects) {
+    const next: Polygon[] = [];
+    for (const polygon of polygons) {
+      const inside = intersectBox(polygon, rect.x0, rect.y0, rect.x1, rect.y1);
+      if (inside.length) removed.push(inside);
+      next.push(...subtractPixelRect(polygon, rect));
+    }
+    polygons = next;
+  }
+  polygons = mergeRectPieces(polygons);
+  const fragments: FractureFragment[] = [];
+  for (const piece of removed) {
+    const xs = piece.map((p) => p.x);
+    const ys = piece.map((p) => p.y);
+    const minX = Math.min(...xs); const maxX = Math.max(...xs);
+    const minY = Math.min(...ys); const maxY = Math.max(...ys);
+    const cols = Math.max(1, Math.ceil((maxX - minX) / fragmentSize));
+    const rows = Math.max(1, Math.ceil((maxY - minY) / fragmentSize));
+    if (cols * rows > 100000) throw new RangeError('Pixel fracture would create too many fragments');
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        const x = minX + (col * (maxX - minX)) / cols;
+        const y = minY + (row * (maxY - minY)) / rows;
+        const part = intersectBox(piece, x, y, x + (maxX - minX) / cols, y + (maxY - minY) / rows);
+        if (part.length) fragments.push({ wallId: wall.id, material: wall.material, polygon: part });
+      }
+    }
+  }
+  const remainingArea = polygons.reduce((sum, polygon) => sum + polygonArea(polygon), 0);
+  // A hole is not an unbolting. A bolted plate that loses a bore keeps its
+  // mounts; only damage that takes most of the wall releases it to the support
+  // solve. Clearing the flag on every pixel used to drop the whole target wall
+  // on the first hit.
+  const stillBolted = wall.anchored === true && remainingArea > originalArea * 0.55;
+  const result: Wall = { ...wall, polygons };
+  if (stillBolted) result.anchored = true;
+  else delete result.anchored;
+  return { wall: result, fragments };
+}
+
 /** Spend energy per world unit of material along a continuous jet. Surviving
  * polygons are still authoritative; fragment size only controls emitted pieces. */
 export function penetrateWalls(
@@ -396,6 +571,23 @@ export interface FragmentBody {
   supported?: boolean;
   /** Ground or wall support (not another chip): treated as static in piles. */
   staticSupport?: boolean;
+  /** Plastic flattening 0..1, set once when a hot metal chip lands. */
+  squash?: number;
+  /** Direction (radians) the chip flattened along. */
+  squashAngle?: number;
+}
+
+/**
+ * Hot metal does not bounce, it lands soft. A chip still glowing from the hit
+ * yields where it lands and keeps the flattened shape; a cold chip keeps its
+ * cast shape. It is the fragment-scale version of a plate warping on the anvil.
+ */
+function flattenOnContact(body: FragmentBody, nx: number, ny: number): void {
+  if (body.squash !== undefined) return;
+  if (!MATERIALS[body.fragment.material].isMetal) return;
+  if (body.heat < 0.45) return;
+  body.squash = Math.min(0.6, body.heat * 0.65);
+  body.squashAngle = Math.atan2(ny, nx);
 }
 
 function hslToRgbPacked(h: number, s: number, l: number): number {
@@ -606,6 +798,7 @@ export function stepFragmentBodies(
           body.vy *= 0.82;
           body.angularVelocity *= 0.7;
         }
+        flattenOnContact(body, push.nx, push.ny);
         supported = true;
       }
     }
@@ -614,6 +807,7 @@ export function stepFragmentBodies(
       body.vy = Math.abs(body.vy) > 40 ? -body.vy * 0.25 : 0;
       body.vx *= 0.6;
       body.angularVelocity *= 0.5;
+      flattenOnContact(body, 0, -1);
       supported = true;
     }
     body.supported = body.supported === true || supported;

@@ -3,6 +3,8 @@ import type { MaterialId } from '../materials';
 import type { Cell, RelayState, StageDefinition, StageSnapshot } from '../stages/types';
 import type { FragmentBody } from './fracture';
 import type { WallState } from './walls';
+import type { BodyTrack } from './body-sim';
+import type { ProjectileBody } from './projectile-body';
 
 export type FireMode = 'arc' | 'straight';
 
@@ -168,11 +170,14 @@ export interface ShotResult {
   bodies: Array<FragmentBody & { spawnT: number }>;
   frames: ProjectileFrame[];
   /**
-   * Deterministic post-impact shell motion. The casing never freezes on the
-   * wall: after the flight frames end it peels off under gravity, tumbles and
-   * settles. Presentation only; damage was already resolved.
+   * The round itself, sampled from the one physics model that now carries it
+   * from its first pixel of contact to rest: the crush inside the plate, the
+   * bore, the jacket tearing free, the chips falling on the seabed. The renderer
+   * draws these samples; it never re-simulates on the device.
    */
-  wreck: ProjectileFrame[];
+  track: BodyTrack | null;
+  /** Terminal state of the round (mass, drive left, whether the jacket shed). */
+  body?: ProjectileBody;
   effects: EffectEvent[];
   damageEvents: DamageEvent[];
   firstContact: ImpactInfo | null;

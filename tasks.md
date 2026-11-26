@@ -15,6 +15,56 @@ recordings. "Current" = what the code does today (verified 2026-11-18).
 
 ---
 
+## Session — one body, per-pixel collision, profile and rebalance (2026-11-26)
+
+The round is now **one physics model** from the moment it touches something.
+
+- **Deleted the two-model split.** `sim/shell-pixels.ts` (`ShellImpact`, the
+  local crush lattice) and `sim/soft-body.ts` (`ProjectileWreck`, the
+  post-impact solver) are gone. `sim/body-sim.ts` (`ProjectileBodySim`) is the
+  only round: world-space cell lattice, springs with plastic creep and ductile
+  tearing, heat conduction, and a raster wall (`sim/wall-pixels.ts`, 2-unit
+  pixels) it collides with one pixel at a time.
+- **All pixels are physical.** A cell either pays for the pixel in front of it
+  out of its own kinetic energy and destroys it, or it is stopped on that face.
+  Penetration depth is now the body's own carving, not a layer cost table:
+  `crossLayer`/`releaseJacket` no longer decide the shot. Wall damage is produced
+  from the carved pixel set (`fractureWallBand` + `tearRim` + `addHeat`), so the
+  hole is exactly the shape of the nose. A round no longer bounces off: it piles
+  up in the hole it made (a Bankshot round skids off a face instead of biting,
+  which is the same contact rule with high restitution, not a scripted bounce).
+- **Replay is a bake.** The solver records at 60 Hz into `BodyTrack` (Int16
+  quarter-units + byte heat) and the renderer only draws it, interpolated.
+  `ShotResult.wreck` is gone; `ShotResult.track` (+ optional `body`) replaced it.
+- **Profile** (`npm run bench:body`, desktop, node; the phone estimate is the
+  desktop median ×4, not a measurement): replay frame median **0.71 ms**
+  (p95 1.44, worst 2.71), contact window 22 frames / **19.4 ms**, whole-shot
+  resolve median **19.5 ms** worst 23.7, baked track 24 frames / 18.0 KiB. On a
+  phone estimate that is **~2.8 ms per replay frame** (inside a 60 Hz budget) and
+  **~78 ms once per shot** for the resolve. The device never steps the body, so
+  only the resolve reaches it, and the bench guards that at 80 ms.
+  `integrateLinks` merged the three per-link passes and the anti-diagonal spring
+  was dropped (450 → 324 links); 1/180 s was tried and is unstable, so the body
+  stays at 1/240 s.
+- **Rebalance.** Core damage is now the energy the round still has when it
+  arrives (`share = clamp(arrive/420, 0.3, 1)`), and core health was raised ~2.5×
+  (AH-01 84 → 210 ... GC-05 198 → 495). `npm run balance` (new) sweeps every
+  battery with a greedy angle/power/ammo search: before, **14/15 fell in one
+  shot**; now **0/15 destroy-core batteries do**, all clear in 2–3 shots, and the
+  six one-shot clears left are relay/expose objectives, where one clean shot is
+  the puzzle.
+- **Reference clips re-watched** (11-13, 11-18, both 2554×1180 @ 60 fps; sheets
+  and frames in `artifacts/ref/`): impact notches a pale steel beam, the rim goes
+  white → orange → violet and cools in a few frames, debris is ragged pixels, and
+  the round stops **nose-first inside** the notch. The live shot now does that
+  (`artifacts/verify/land2.png`, `land4.png`): a square punched hole with a ragged
+  edge, an ember at the entry, the rod embedded, nothing bouncing away.
+
+Checks: `npx tsc --noEmit`, `npm test` (raster, collision, body, projectile,
+save, deform) and `npm run build` all pass; `npm run bench:body` and
+`npm run balance` pass their guards. Live: AH-02 fired in landscape at 1280×760,
+no console errors, hole + embedded round as above.
+
 ## P0 — Replace the damage grid with wall objects (the rewrite)
 
 Current state (2026-11-18, P0 session): **partially done.** Damage,
@@ -336,6 +386,49 @@ Observed exact strings and layout (compare `src/ui/GameHud.ts`,
   core (3★, cover 0%). Heat stain visible but small vs recordings;
   fragment cubes small; no test-range stage yet (P1-1).
 
+## Projectile destruction physics (2026-11-26)
+
+The round is no longer a sprite with a pre-baked wreck. Design:
+`docs/superpowers/specs/2026-11-26-projectile-physics-design.md`.
+
+- **Components.** `sim/projectile-shell.ts` tags every sampled cell with a
+  component (`jacket` copper, `penetrator` steel, `band` copper, `cap` steel).
+  `SHELL_COMPONENT_MASS` / `SHELL_CORE_FRACTION` derive each part's mass from the
+  lattice, so the penetrator's share is geometry, not a per-ammo constant.
+  `sim/projectile-material.ts` holds the copper/steel physical data.
+- **World-space soft body.** `sim/soft-body.ts` (`ProjectileWreck`) integrates the
+  round after contact against the shot's own wall polygons and the ground:
+  axial/shear springs with heat softening, plastic rest-length creep (bounded
+  around the cast length), cumulative ductile tearing, volume constraint,
+  cluster detachment and surface spall, per-cell heat, fixed 1/480 s substeps and
+  deterministic seeding. `ShotResult.wreck` is now a `WreckState` (pose,
+  momentum, mass, cell scale, seed, surviving components) instead of 57 scripted
+  frames; `ProjectileView.drawWreck` steps it from replay time.
+- **Penetration + separation.** `projectile-body.ts` carries jacket/penetrator
+  masses and a shape quality. When a layer cannot be paid for, the jacket is shed
+  (`releaseJacket`) and the bare steel core retries that layer at a much lower
+  area-normalised resistance — the AP round's real trick. A released round flies
+  on with `scale 0.58`; if the core also fails, the wreck is solved from the
+  penetrator alone.
+- **X-ray diagram.** Zoomed past `XRAY_ZOOM` (1.2x, i.e. the shot-follow camera)
+  the round is drawn per component in its own colour with one labelled box per
+  component (`COPPER JACKET`, `STEEL PENETRATOR`, `DRIVING BAND`, `BOAT-TAIL`),
+  joined by leader lines. `componentBoxes()` is pure and tested.
+- **Thermal working window.** `settleHotMetal()` runs a transient heat field
+  (permanent scorch subtracted) through `deformHeatedWalls` until it decays, so
+  hot metal bends like butter for a moment and then freezes. Deformation is now a
+  **bend** (strip translation, area-exact) instead of a radial dilation, so
+  working a plate no longer adds cover. All metal, and only metal, warps.
+- **Hot fragments.** A metal fragment still glowing when it lands gets a plastic
+  squash (`FragmentBody.squash`) and is drawn flattened; cold chips keep their
+  cast shape.
+- Tests: new `npm run test:softbody`; `test-deform` covers the thermal window and
+  hot fragments; `test-projectile` pins the separation and the new wreck payload.
+  `npm test` and `npm run build` are green. **Open:** the release gives the round
+  roughly one extra layer, so the campaign star targets (1:1 validator finds
+  1-shot clears on several stages) need a balance pass; the in-flight crush
+  during penetration still uses the single-material local lattice.
+
 ## Physics and camera follow-up (2026-11-23)
 
 - Wall-state deserialization merges legacy rectangular cells without bridging
@@ -375,3 +468,51 @@ Observed exact strings and layout (compare `src/ui/GameHud.ts`,
   `spawnFragmentBodies()`, `stepFragmentBodies()`. Checks added to
   `scripts/test-fracture.ts` and passing.
 - This file: `tasks.md`.
+
+### Preview parity, exact pixel holes, wall soft body (2026-11-26, final pass)
+
+- [x] `previewShot()` runs the one shot solver with damage generation off;
+      deleted the preview's layer arithmetic and scripted ricochet. The guide
+      path, core claim, ricochet count and stop point all come from the body.
+- [x] Preview refreshes are throttled to 120 ms during a drag; `findOpeningAim`
+      uses the flight-only `probeAim()` (never displayed).
+- [x] `subtractPixelCells()` replaces `fractureWallBand` for projectile bores:
+      the hole is the exact union of detached 2-unit cells, not a rotated
+      square. Anchored walls stay bolted unless the bore takes >45% of them.
+- [x] `WallPixels` now rigs a 22-unit pixel patch as a mass-spring soft body:
+      density × area mass, strength-scaled axial/diagonal links, plastic flow
+      past yield, tear; each contact pushes the touched pixel and its connected
+      neighbours. `deformationAt()` bends the surviving wall polygons after the
+      shot. Only awake nodes are integrated.
+- [x] Tests: wall patch dents, ripple reaches connected pixels, speed/mass
+      increase the dent, wood deforms more than steel, carve removes exactly
+      one pixel, plus the full existing suite. `tsc` / `npm test` / `build`
+      green; `bench:body` 19.4 ms median / 77.6 ms phone estimate (budget 80).
+- [x] Campaign validator runs on the rebalanced core health (log in
+      `artifacts/verify/validate-final.log`).
+
+### 60 fps reference comparison (impact frames `artifacts/ref/imp_a..c`)
+
+Captured `artifacts/verify/hit-a..d.png` (AH-02, AP Solid, 20°/300). The shot
+enters the roof, bores through, reaches the core. Differences still visible:
+
+1. **Scenario.** The reference is a near-normal hit on a thin (~10 px) steel
+   plate; the capture is a shallow (~10°) hit on a thick timber roof. Hole
+   shape and lip cannot be matched one-to-one until the same plate is fired at
+   in-game (AH-01 w2 is the closest steel plate).
+2. **Entry flash.** Reference: white-hot core, violet/red scorch ring, embers.
+   Ours: one small orange ember, char on timber; metal heat was verified in
+   `test:deform` (3 blooms, 14 strips) but not captured on a steel hit here.
+3. **Hole.** Reference: about 1.5× the round diameter with a curled, bright
+   lip. Ours: exact pixel stair-step, and on an oblique hit a long gouge
+   (~300 world units) because the round keeps carving while it slides.
+4. **Round.** Reference: the round stops embedded with its nose just through
+   the plate. Ours: it keeps going through layers until its energy is spent,
+   which is the requested multi-layer behaviour; this shot reached the core.
+5. **Debris.** Reference: almost no chips. Ours: a large grey/wood chip cloud,
+   one chip per removed area block.
+6. **Wall warp.** Reference: a tight local bow. Ours: a broad V bend from the
+   22-unit patch (visible in `hit-a`), with the crease following the bore.
+7. **Pixel scale.** Reference plate is ~6–8 art pixels thick; ours reads
+   ~5 pixels for the timber roof, but the round is ~20 art pixels long, so the
+   round/plate ratio is close.

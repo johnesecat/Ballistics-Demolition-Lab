@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { MAX_RIM_VERTICES, deformHeatedWalls, tearRim } from '../src/game/sim/wall-deform';
+import { MAX_RIM_VERTICES, deformHeatedWalls, settleHotMetal, tearRim } from '../src/game/sim/wall-deform';
+import { spawnFragmentBodies, stepFragmentBodies } from '../src/game/sim/fracture';
 import { cloneWallState, detachUnsupported, type WallState } from '../src/game/sim/walls';
 import { traceWalls, type Wall } from '../src/game/sim/fracture';
 import { simulateShotWalls } from '../src/game/sim/wall-simulator';
@@ -183,4 +184,70 @@ assert(vertices(steelAfter) !== vertices(steelBefore), 'crossed steel gains torn
 console.log(
   `metal warp: ${before.walls[0]!.polygons.length} -> ${state.walls[0]!.polygons.length} polygons, sweep ${sweepBefore.x.toFixed(1)} -> ${sweepAfter.x.toFixed(1)}, ${pierceHeat.length} hot steel blooms`,
 );
+
+// --- Thermal working window ------------------------------------------------
+// Red hot metal is butter, but only while it is hot. The working heat decays to
+// nothing inside the window; the permanent scorch survives, and a plate that has
+// already cooled never bends again.
+const hot: WallState = {
+  walls: [plate],
+  heat: [{ x: 706, y: 268, heat: 1, radius: 34, material: 'steel' }],
+  groundY: 346,
+  version: 1,
+};
+const coldPlate = cloneWallState(hot);
+settleHotMetal(hot);
+const bentVertex = hot.walls[0]!.polygons.flat();
+assert(
+  bentVertex.some((point) => !plate.polygons[0]!.some((source) => Math.abs(source.x - point.x) < 0.001 && Math.abs(source.y - point.y) < 0.001)),
+  'a red hot plate moves while it is worked',
+);
+const afterFirst = cloneWallState(hot);
+settleHotMetal(hot);
+assert.notDeepEqual(hot.walls, afterFirst.walls, 'still-hot metal keeps yielding on the next working pass');
+// Cooled to the permanent stain: no more working heat, so no more movement.
+const cooled = cloneWallState(hot);
+for (const region of cooled.heat) region.heat = 0.42;
+const cooledBefore = cloneWallState(cooled);
+settleHotMetal(cooled);
+assert.deepEqual(cooled.walls, cooledBefore.walls, 'cooled steel holds the shape it froze in');
+// Determinism.
+settleHotMetal(coldPlate);
+assert.deepEqual(coldPlate.walls, afterFirst.walls, 'the thermal window is deterministic');
+console.log(`thermal window: ${afterFirst.walls[0]!.polygons.length} strips, cooled plate frozen`);
+
+// Brick never softens, however hot the scorch is.
+const hotBrick: WallState = {
+  walls: [{ ...plate, material: 'brick' }],
+  heat: [{ x: 706, y: 268, heat: 1, radius: 34, material: 'brick' }],
+  groundY: 346,
+  version: 1,
+};
+settleHotMetal(hotBrick);
+assert.deepEqual(hotBrick.walls[0]!.polygons, plate.polygons, 'hot brick still cracks rather than bending');
+
+// --- Hot fragments deform where they land ----------------------------------
+// A chip of steel still glowing when it lands flattens; a cold one keeps its
+// cast shape. That is the fragment-scale version of the anvil. A single hot
+// steel chip falls onto the seabed and picks up a plastic squash on contact.
+const fragment = () => [
+  {
+    polygon: [
+      { x: 700, y: 300 },
+      { x: 708, y: 300 },
+      { x: 708, y: 308 },
+      { x: 700, y: 308 },
+    ],
+    material: 'steel' as const,
+  },
+];
+const hotChip = spawnFragmentBodies(fragment(), { x: 704, y: 304 }, { x: 20, y: 0 }, 77, 1)[0]!;
+assert(hotChip.heat > 0.9, `a chip at the impact point is white hot, got ${hotChip.heat.toFixed(2)}`);
+for (let i = 0; i < 90; i += 1) stepFragmentBodies([hotChip], 1 / 60, 346);
+assert(hotChip.squash !== undefined && hotChip.squash > 0, 'hot metal flattens where it lands');
+const coldChip = spawnFragmentBodies(fragment(), { x: 704, y: 304 }, { x: 20, y: 0 }, 77, 0)[0]!;
+for (let i = 0; i < 90; i += 1) stepFragmentBodies([coldChip], 1 / 60, 346);
+assert.equal(coldChip.squash, undefined, 'cold metal keeps its cast shape');
+console.log(`hot fragment: squash ${hotChip.squash!.toFixed(2)}, cold fragment untouched`);
+
 console.log('Physical wall deformation checks passed');

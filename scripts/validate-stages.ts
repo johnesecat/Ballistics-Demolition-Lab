@@ -21,7 +21,8 @@ import { cloneSnapshot } from '../src/game/stages/types';
 import { simulateShot } from '../src/game/sim/simulator';
 import type { FireMode, ShotInput, ShotResult } from '../src/game/sim/types';
 import { AMMO_BY_ID } from '../src/game/ammo/catalogue';
-import { previewShot } from '../src/game/sim/preview';
+import { probeAim } from '../src/game/sim/preview';
+import { getWallState } from '../src/game/sim/wall-simulator';
 
 const CORE_AMMO = [
   'heat-round',
@@ -98,6 +99,12 @@ interface SolveResult {
 
 function scanCore(stage: BuiltStage, current: StageSnapshot): { input: ShotInput; result: ShotResult } | null {
   let best: { input: ShotInput; result: ShotResult } | null = null;
+  // The aim preview now runs the real body solver, which is far too expensive
+  // for a 70k-point feasibility sweep. Filter with the cheap flight-only probe:
+  // keep shots that would reach the core on the pre-contact line and shots that
+  // first touch a wall close enough for the round to bore on into it. Every
+  // survivor is still decided by the authoritative shot simulation below.
+  const walls = current.wallState?.walls ?? getWallState(current).walls;
   const modes: FireMode[] = ['straight', 'arc'];
   for (const ammoId of CORE_AMMO) {
     const ammo = AMMO_BY_ID.get(ammoId);
@@ -107,8 +114,11 @@ function scanCore(stage: BuiltStage, current: StageSnapshot): { input: ShotInput
       for (let angle = 4; angle <= 84; angle += 1) {
         for (let power = 120; power <= 441; power += 10) {
           const input: ShotInput = { angleDeg: angle, power, mode, ammoId, choiceId: choice };
-          const preview = previewShot(stage.def, current, input);
-          if (!preview.willHitCore) continue;
+          const preview = probeAim(stage.def, current, input, { walls, relays: false });
+          const nearCore = preview.firstContact
+            ? Math.hypot(preview.firstContact.x - current.core.x, preview.firstContact.y - current.core.y) < 220
+            : false;
+          if (!preview.willHitCore && !nearCore) continue;
           const result = simulateShot(stage.def, current, input);
           if (result.coreDamage < 1) continue;
           if (!best || result.coreDamage > best.result.coreDamage) best = { input, result };
@@ -197,7 +207,7 @@ for (const def of stagesToCheck) {
   const status = result.success ? 'OK' : 'FAIL';
   if (!result.success) failed += 1;
   console.log(
-    `${status} ${def.id.padEnd(14)} ${def.name.padEnd(18)} ${def.objective.kind.padEnd(13)} ${def.generator.padEnd(8)} seed=${String(built.diagnostics.generatedSeed).padStart(10)} cells=${String(built.diagnostics.cellCount).padStart(4)} unsupported=${unsupported.length} core=${Math.round(initial.core.hp)} cover=${result.cover.toFixed(2)} shots=${result.shots}/${def.shots} ${result.used.map((s) => s.input.ammoId).join(',')}`,
+    `${status} ${def.id.padEnd(14)} ${def.name.padEnd(18)} ${def.objective.kind.padEnd(13)} ${def.generator.padEnd(8)} seed=${String(built.diagnostics.generatedSeed).padStart(10)} cells=${String(built.diagnostics.cellCount).padStart(4)} unsupported=${unsupported} core=${Math.round(initial.core.hp)} cover=${result.cover.toFixed(2)} shots=${result.shots}/${def.shots} ${result.used.map((s) => s.input.ammoId).join(',')}`,
   );
 }
 console.log(`\n${stagesToCheck.length - failed}/${stagesToCheck.length} stages validated as solvable`);

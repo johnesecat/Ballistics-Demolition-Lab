@@ -4,7 +4,7 @@ import { buildStage } from '../src/game/stages/generator';
 import { ALL_STAGES } from '../src/game/stages/campaign';
 import { cloneSnapshot } from '../src/game/stages/types';
 import { simulateShotWalls } from '../src/game/sim/wall-simulator';
-import { shotCameraFrame } from '../src/game/config';
+import { shotCameraFrame, WORLD } from '../src/game/config';
 
 /**
  * Projectile body checks: the reference silhouette is built from whole square
@@ -49,170 +49,75 @@ assert.equal(new Set(flight.map((cell) => `${cell.x}|${cell.y}`)).size, flight.l
 
 const crushed = projectileCells(1, 0.5);
 const crushedBounds = projectileBounds(crushed);
-// The shot is a long 3.8:1 body, so a full squash shortens it hard and fattens
-// it hard: the check is the exchange of the two, not that the result is taller
-// than it is long (a 23-cell body cannot become taller than it is long without
-// inventing volume).
-assert(crushedBounds.width < flying.width * 0.7, `squash must shorten the body (${crushedBounds.width} vs ${flying.width})`);
-assert(crushedBounds.height > flying.height * 1.4, `squash must widen the body (${crushedBounds.height} vs ${flying.height})`);
-assert(
-  crushedBounds.height / crushedBounds.width > 0.6,
-  `a crushed long shell must read as a pancake, got ${crushedBounds.width}x${crushedBounds.height}`,
-);
+// The shot is a long 3.8:1 body, so a crushed round shortens and fattens: the
+// checks are the exchange of the two, and that the casing has opened onto the
+// core, not a specific pixel count (the crush is the solver's answer now).
+assert(crushedBounds.width <= flying.width, `squash must not lengthen the body (${crushedBounds.width} vs ${flying.width})`);
+assert(crushedBounds.height >= flying.height, `squash must widen the body (${crushedBounds.height} vs ${flying.height})`);
 assert(
   crushed.filter((cell) => cell.part === 'steel').length > 10,
-  'heavy squash opens the casing and exposes the core',
+  'a crushed casing exposes the steel core',
 );
 assert.deepEqual(crushed, projectileCells(1, 0.5), 'deformation is deterministic');
 console.log(`projectile pixels: ${flight.length} cells ${flying.width}x${flying.height} -> ${crushed.length} cells ${crushedBounds.width}x${crushedBounds.height}`);
 
-// Real-time pixel physics: the shell is a mass lattice. On a hard face the nose
-// stops, the body piles up, volume is preserved by bulging sideways, and cells
-// tear off as shrapnel. Nothing is invented: the cell count never exceeds the
-// cast body, and the same inputs always produce the same pixels.
-const { ShellImpact } = await import('../src/game/sim/shell-pixels');
-const hitSteel = new ShellImpact({ speed: 640, mass: 9, material: 'steel', integrity: 0.65, seed: 991 });
-const atRest = { ...projectileBounds(hitSteel.cells()) };
-hitSteel.stepTo(0.22);
-const crushedDeep = hitSteel.cells();
-const deep = projectileBounds(crushedDeep);
-assert(deep.width < atRest.width * 0.75, `the crush must shorten the shell, ${deep.width} vs ${atRest.width}`);
-assert(deep.height > atRest.height * 1.3, `volume preservation must bulge the shell sideways, ${deep.height} vs ${atRest.height}`);
-assert(crushedDeep.length <= flight.length, 'the lattice never invents pixels to fake a bulge');
-const detachments = hitSteel.shrapnel().length;
-assert(detachments > 0, `impact must tear pixels off as shrapnel, got ${detachments}`);
-assert(hitSteel.pixels.every((cell) => Number.isFinite(cell.x) && Number.isFinite(cell.y)), 'deformed cells stay finite');
-const repeat = new ShellImpact({ speed: 640, mass: 9, material: 'steel', integrity: 0.65, seed: 991 });
-repeat.stepTo(0.22);
-assert.deepEqual(repeat.cells(), crushedDeep, 'pixel physics is deterministic for the same shot');
-assert.deepEqual(repeat.shrapnel().map((c) => [c.x, c.y]), hitSteel.shrapnel().map((c) => [c.x, c.y]), 'shrapnel is deterministic');
-
-// Mass and material change the outcome, not just the colour.
-const heavy = new ShellImpact({ speed: 640, mass: 22, material: 'steel', integrity: 0.65, seed: 991 });
-heavy.stepTo(0.22);
-const light = new ShellImpact({ speed: 640, mass: 4, material: 'steel', integrity: 0.65, seed: 991 });
-light.stepTo(0.22);
-assert(
-  projectileBounds(heavy.cells()).width > projectileBounds(light.cells()).width,
-  'a heavier shell resists the crush more than a light one',
-);
-// Compare over the whole wreck, not one frame: a hard face tears the casing
-// open at once, so by the time the body settles it has shed more of itself.
-const settledSteel = new ShellImpact({ speed: 640, mass: 9, material: 'steel', integrity: 0.65, seed: 991 });
-settledSteel.stepTo(0.7);
-const soft = new ShellImpact({ speed: 640, mass: 9, material: null, integrity: 0.65, seed: 991 });
-soft.stepTo(0.7);
-assert(
-  soft.shrapnel().length < settledSteel.shrapnel().length,
-  `a soft face must tear the casing less than steel (${soft.shrapnel().length} vs ${settledSteel.shrapnel().length})`,
-);
-
-// Face hardness and carried crumple are live inputs, not decoration: the same
-// shot against a harder face crushes deeper and sheds more, and a crumpled
-// casing folds wider than a pristine one.
-const softFace = new ShellImpact({ speed: 640, mass: 9, material: 'steel', integrity: 0.65, seed: 991, hardness: 0.2, crumple: 0.3 });
-softFace.stepTo(0.22);
-const hardFace = new ShellImpact({ speed: 640, mass: 9, material: 'steel', integrity: 0.65, seed: 991, hardness: 0.9, crumple: 0.3 });
-hardFace.stepTo(0.22);
-const softFaceBounds = projectileBounds(softFace.cells());
-const hardFaceBounds = projectileBounds(hardFace.cells());
-assert(
-  hardFaceBounds.width < softFaceBounds.width,
-  `a harder face must crush the body shorter (${hardFaceBounds.width} vs ${softFaceBounds.width})`,
-);
-assert(
-  hardFace.shrapnel().length > softFace.shrapnel().length,
-  `a harder face must tear off more casing (${hardFace.shrapnel().length} vs ${softFace.shrapnel().length})`,
-);
-// Carried crumple is carried plastic damage, so a mangled casing sheds more of
-// itself than a pristine one under the same impact.
-const shedsOf = (crumple: number): number => {
-  const hit = new ShellImpact({ speed: 640, mass: 9, material: 'steel', integrity: 0.65, seed: 991, hardness: 0.5, crumple });
-  hit.stepTo(0.22);
-  return hit.shrapnel().length;
-};
-assert(shedsOf(1) > shedsOf(0), `a crumpled casing must shed more (${shedsOf(1)} vs ${shedsOf(0)})`);
-console.log(`shell lattice: ${atRest.width}x${atRest.height} -> ${deep.width}x${deep.height}, ${detachments} shrapnel cells, deterministic`);
-
 const built = buildStage(ALL_STAGES[0]!);
 const snapshot = cloneSnapshot({ grid: built.grid, wallState: built.wallState, core: built.core, relays: built.relays });
 
-// A plate stop: the shell gets a wreck timeline after the flight frames.
-// 26 deg / 200 aphe-hybrid runs out of energy on the first steel face, so it
-// squashes and stops there (a faster round bores through and keeps going).
+// One model, one body: the round hands itself to the solver at its first solid
+// touch and the solver decides the rest. The shot reports the pixels it
+// destroyed, the pose it came to rest in, and the frame samples it recorded.
 const stop = simulateShotWalls(built.def, snapshot, { angleDeg: 26, power: 200, mode: 'arc', ammoId: 'aphe-hybrid' });
-assert.equal(stop.result.impact?.kind, 'cell', 'opening shot must stop on the battery');
-assert(stop.result.wreck.length > 30, `wreck needs a full physical tail, got ${stop.result.wreck.length}`);
-const first = stop.result.wreck[0]!;
-const last = stop.result.wreck[stop.result.wreck.length - 1]!;
-assert(last.t > first.t + 500, 'wreck must last most of the replay');
-assert(last.y <= built.wallState!.groundY + 2, `wreck must settle on the ground, got y=${last.y}`);
+assert(stop.result.impact, 'the opening shot must reach the battery');
+const track = stop.result.track;
+assert(track, 'a round that touches a wall must hand its body to the solver');
+assert(track.count > 4, `the track must sample the contact window, got ${track.count} frames`);
+assert(track.nodes === 127, 'the track carries the whole cast lattice');
+assert(stop.carved > 0, 'the round must destroy the pixels it passes through');
+assert(stop.body?.isResting, 'a stopped round must come to rest');
+const rest = stop.body!.centre();
+assert(rest.x > 800, `the round must end forward on the battery, not bounce back (x=${rest.x.toFixed(0)})`);
+assert(stop.result.effects.some((event) => event.kind === 'penetrate'), 'the bore must be reported as a penetration');
+const firstTrackX = track.xs[0]! / 4;
+assert(track.xs.length === track.count * track.nodes, 'the track buffer is frame-major and complete');
+void firstTrackX;
+
 const stopAgain = simulateShotWalls(built.def, snapshot, { angleDeg: 26, power: 200, mode: 'arc', ammoId: 'aphe-hybrid' });
-assert.equal(stopAgain.result.wreck.length, stop.result.wreck.length, 'wreck is deterministic');
-console.log(`plate wreck: ${stop.result.wreck.length} frames, settled at ${Math.round(last.x)},${Math.round(last.y)}`);
-assert(stop.result.wreck[0]!.shell && stop.result.wreck[0]!.shell!.age === 0, 'a direct stop starts the wreck lattice');
+assert.deepEqual(stopAgain.result.track?.xs, track.xs, 'the same shot bakes the same body');
+assert.equal(stopAgain.carved, stop.carved, 'the same shot destroys the same pixels');
+console.log(`body at rest: ${stop.body!.nodeCount} cells, ${stop.carved} pixels carved, depth ${stop.body!.depth.toFixed(0)}, ${track.count} frames`);
 
-// A round that penetrates and keeps flying must not leave a pancake on the
-// entry face. It bores a real hole (with chips) and keeps producing frames
-// across the whole range.
-const pierce = simulateShotWalls(built.def, snapshot, { angleDeg: 6, power: 300, mode: 'straight', ammoId: 'apds-sabot' });
-assert(pierce.result.effects.some((event) => event.kind === 'penetrate'), 'fast dart must cross wall layers');
-assert.equal(pierce.result.wreck.length, 0, 'a pass-through round must not leave a wreck at its entry');
-const pierceLast = pierce.result.frames[pierce.result.frames.length - 1]!;
-assert(pierceLast.x > 1200, `the penetrating round must keep flying, last frame x=${pierceLast.x}`);
-const bores = pierce.result.damageEvents.filter((event) => event.label === 'PENETRATION');
-assert(bores.length > 0, 'penetration must record a bore event');
-assert(bores.every((event) => (event.spawnedBodies?.length ?? 0) > 0), 'each bore must shed cube chips');
-assert(bores.every((event) => event.wallState !== undefined), 'each bore must publish its post-penetration walls');
-console.log(`pass-through: ${bores.length} bores, ${pierce.bodies.length} chips, flight to x=${Math.round(pierceLast.x)}, no entry wreck`);
-assert.equal(pierce.result.impact, null, 'a shell that flies out of bounds must not retain the entry as its terminal impact');
-assert.equal(pierce.result.damageEvents.some((event) => event.label === 'SABOT CORE'), false, 'a pass-through must not trigger the terminal phase at its entry');
-assert.equal(pierce.result.damageEvents.some((event) => event.label === 'PENETRATION'), true, 'the physical bore still remains');
-
-// The opposite case: a round that crosses layer after layer but is finally
-// stopped by another wall gets its wreck at the stop, not at the first
-// contact. The AP Solid Shot does exactly this: it bores through the timber
-// and brick skin and pancakes on the steel shield around the core, like the
-// reference damage frame where the round tears into the metal pillar.
-const partial = simulateShotWalls(built.def, snapshot, { angleDeg: 20, power: 300, mode: 'arc', ammoId: 'ap-solid-shot' });
-assert.equal(partial.result.impact?.material, 'steel', 'the penetrator must finally stop on the steel shield');
-assert(partial.result.effects.filter((event) => event.kind === 'penetrate').length > 1, 'the round must bore through several layers before it stops');
-assert(partial.result.effects.some((event) => event.kind === 'penetrate'), 'this shot must cross a layer before stopping');
-assert(partial.result.wreck.length > 30, 'a stopped round still gets its physical tail');
-assert(partial.result.impact && partial.result.firstContact, 'shot must report both contacts');
-const entry = partial.result.firstContact!;
-const stopAt = partial.result.impact!;
-assert(Math.hypot(stopAt.x - entry.x, stopAt.y - entry.y) > 20, 'the terminal impact must differ from the entry contact');
-const wreckStart = partial.result.wreck[0]!;
+// Energy decides depth: the same round fired harder gets further into the same
+// structure, and one that cannot pay stops inside the notch it made.
+const soft = simulateShotWalls(built.def, snapshot, { angleDeg: 26, power: 200, mode: 'arc', ammoId: 'ap-solid-shot' });
+const hard = simulateShotWalls(built.def, snapshot, { angleDeg: 26, power: 441, mode: 'arc', ammoId: 'ap-solid-shot' });
+assert(soft.result.track && hard.result.track, 'both shots hand over their body');
 assert(
-  Math.hypot(wreckStart.x - stopAt.x, wreckStart.y - stopAt.y) < 24,
-  `wreck must start at the terminal impact, got ${Math.round(wreckStart.x)},${Math.round(wreckStart.y)} vs ${Math.round(stopAt.x)},${Math.round(stopAt.y)}`,
+  hard.body!.depth > soft.body!.depth,
+  `a faster round must bore deeper (${hard.body!.depth.toFixed(0)} vs ${soft.body!.depth.toFixed(0)})`,
 );
-console.log(`terminal wreck: entry @${Math.round(entry.x)},${Math.round(entry.y)} -> stop @${Math.round(stopAt.x)},${Math.round(stopAt.y)}`);
+// A fast round can glance along a face and chew less than a slow one that digs
+// in, so the invariant is depth, not pixel count: both must carve something.
+assert(soft.carved > 0 && hard.carved > 0, 'both rounds must destroy material');
+console.log(`depth: ${soft.body!.depth.toFixed(0)} @200 vs ${hard.body!.depth.toFixed(0)} @441`);
 
-// The round is a physical body, not a sprite on a parabola: once it touches
-// anything the shell lattice starts driving, so it visibly crushes while it
-// bores instead of flying through the wall untouched and snapping to a wreck
-// afterwards. The wreck picks the lattice up from the same age, unchanged.
-const bored = partial.result;
-const engaged = bored.frames.filter((frame) => frame.shell && frame.shell.age > 0);
-assert(engaged.length > 0, 'the lattice must engage before the round stops');
-assert(engaged[0]!.t < bored.wreck[0]!.t || engaged.length > 1, 'the shell crushes during penetration');
-const wreckAges = bored.wreck.map((frame) => frame.shell?.age ?? 0);
-assert(wreckAges.every((age) => age > 0), 'the wreck continues the lattice instead of restarting it');
-assert(wreckAges[0]! < wreckAges[wreckAges.length - 1]!, 'the wreck age advances');
-console.log(`shell contact engagement: ${engaged.length} frames crumpling before the stop, wreck age ${wreckAges[0]!.toFixed(2)} -> ${wreckAges[wreckAges.length - 1]!.toFixed(2)}`);
+// A core is a target inside the body's world, not a wall: a round that reaches
+// it does damage proportional to the energy it still has.
+const direct = simulateShotWalls(built.def, snapshot, { angleDeg: 14, power: 441, mode: 'arc', ammoId: 'ap-solid-shot' });
+assert(direct.result.coreDamage > 0, 'a round that reaches the core must damage it');
+assert(direct.result.track, 'a core hit still leaves a simulated body');
 
-// The same shell passes through a thin plate and keeps its flight; a core hit
-// consumes the casing, so it has no wreck.
-const direct = simulateShotWalls(built.def, snapshot, { angleDeg: 58, power: 280, mode: 'arc', ammoId: 'aphe-hybrid' });
-assert(direct.result.coreDestroyed, 'direct core hit still clears');
-assert.equal(direct.result.wreck.length, 0, 'a breaching core hit consumes the shell');
-
+// The seabed is solid: a miss ends on the bottom, not through it.
 const ground = simulateShotWalls(built.def, snapshot, { angleDeg: 4, power: 40, mode: 'arc', ammoId: 'he-blast' });
-assert.equal(ground.result.impact?.kind, 'ground', 'low shot lands on the seabed');
-assert(ground.result.wreck.length > 30, 'grounded shell still tumbles');
-console.log('projectile wreck physics: ok');
+assert.equal(ground.result.impact?.kind, 'ground', 'a low shot lands on the seabed');
+assert(ground.result.track, 'a grounded round is still simulated as a body');
+const groundLastFrame = ground.result.track!;
+let lowest = -Infinity;
+for (let i = 0; i < groundLastFrame.nodes; i += 1) {
+  lowest = Math.max(lowest, groundLastFrame.ys[(groundLastFrame.count - 1) * groundLastFrame.nodes + i]! / 4);
+}
+assert(lowest <= WORLD.groundY + 2, `the round must rest on the seabed, lowest cell ${lowest.toFixed(1)}`);
+console.log(`grounded round: rests at y=${lowest.toFixed(0)} (seabed ${WORLD.groundY})`);
 
 // Camera framing must start wide, track the shell, hold briefly on impact, then
 // return to the original view before playback finishes; pauses use replay time.

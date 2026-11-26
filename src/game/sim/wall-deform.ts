@@ -132,9 +132,10 @@ export function deformHeatedWalls(state: WallState, options: { maxShift?: number
   const walls: Wall[] = [];
   for (const wall of state.walls) {
     const def = MATERIALS[wall.material];
-    // Only ductile material bows. Brick, concrete and timber crack instead, and
-    // that removal is handled by the fracture path.
-    if (!def.isMetal && def.sag < 0.3) {
+    // Only metal bows. Brick, concrete and timber crack instead, and that
+    // removal is handled by the fracture path. The rule is the material class,
+    // not a per-material checkbox: every metal (armour, steel, copper) warps.
+    if (!def.isMetal) {
       walls.push(wall);
       continue;
     }
@@ -167,23 +168,20 @@ export function deformHeatedWalls(state: WallState, options: { maxShift?: number
           continue;
         }
         const heat = bloom.heat;
-        // Bow away from the burn, not across it: heated metal stretches away
-        // from the hot spot (that is what opens a breach instead of closing
-        // it), with a smaller out-of-plane component along the face normal.
-        const bow = Math.min(maxShift, heat * 26 * def.sag);
-        // Softened steel also sags under its own weight.
-        const sag = Math.min(maxShift * 0.5, heat * heat * 16 * def.sag);
-        const shifted = piece.poly.map((point) => {
-          const dx = point.x - bloom.x;
-          const dy = point.y - bloom.y;
-          const len = Math.hypot(dx, dy);
-          const ux = len > 0.6 ? dx / len : piece.nx;
-          const uy = len > 0.6 ? dy / len : piece.ny;
-          return {
-            x: point.x + ux * bow * 0.85 + piece.nx * bow * 0.35,
-            y: point.y + uy * bow * 0.85 + piece.ny * bow * 0.35 + sag * 0.5,
-          };
-        });
+        // Bending, not stretching. Each strip is translated along the plate's
+        // normal by an amount that peaks in the middle of the plate and falls to
+        // zero at its ends: that is a beam bow, and because a translation is an
+        // isometry the plate's area is unchanged. The old radial displacement
+        // inflated the polygon instead, so a hot plate silently gained cover
+        // every time it was worked.
+        const bow = Math.min(maxShift, heat * 26 * def.sag) * Math.sin(Math.PI * piece.t);
+        // Softened steel also sags under its own weight, more the higher the
+        // strip sits above the burn.
+        const sag = Math.min(maxShift * 0.5, heat * heat * 16 * def.sag) * Math.max(0, piece.t - 0.45);
+        const shifted = piece.poly.map((point) => ({
+          x: point.x + piece.nx * bow,
+          y: point.y + piece.ny * bow + sag,
+        }));
         // Tearing rim: points near the hottest bloom are pulled outward along
         // the surface as the metal peels open.
         const torn = shifted.map((point) => {
@@ -201,6 +199,50 @@ export function deformHeatedWalls(state: WallState, options: { maxShift?: number
     if (polygons.length > 0) walls.push({ ...wall, polygons });
   }
   state.walls = walls;
+}
+
+/**
+ * The thermal working window.
+ *
+ * A plate that has just been hit is red hot, and red hot metal is butter: it
+ * bows, sags and creeps under its own weight for as long as it is hot. The
+ * *permanent* scorch stain (`WallState.heat`) never falls below 0.42, so it
+ * cannot be the thing that decides when movement stops. This function therefore
+ * runs a separate transient field -- the working heat -- through the same
+ * deformer, decaying it to nothing inside the window. When the transient heat is
+ * gone the metal is rigid again and the shape it reached is frozen in, which is
+ * exactly what happens to a blade taken off the anvil.
+ *
+ * Brick, concrete and timber are never passed through here: they crack, they do
+ * not bend.
+ */
+export function settleHotMetal(state: WallState, options: { steps?: number } = {}): void {
+  if (state.heat.length === 0) return;
+  const steps = Math.max(1, Math.min(24, Math.round(options.steps ?? 10)));
+  // Heat below the permanent-stain floor is a scorch mark, not working heat.
+  // Without subtracting it a plate would keep bending on every later shot, long
+  // after it had gone black -- the opposite of "red hot for a moment, rigid
+  // afterwards".
+  const stain = 0.42;
+  const transient: WallState['heat'] = state.heat.map((region) => ({
+    ...region,
+    // Working heat only exists in metal. A scorched brick face is evidence, not
+    // a soft body.
+    heat:
+      region.material && MATERIALS[region.material].isMetal
+        ? Math.max(0, (region.heat - stain) / (1 - stain))
+        : 0,
+  }));
+  if (!transient.some((region) => region.heat > 0.15)) return;
+  const view: WallState = { walls: state.walls, heat: transient, groundY: state.groundY, version: state.version };
+  for (let step = 0; step < steps; step += 1) {
+    // The hottest part of the window does the most work; the last steps only
+    // finish the sag as the plate cools toward rigid.
+    const remaining = 1 - step / steps;
+    deformHeatedWalls(view, { maxShift: MAX_BEND * (0.3 + 0.7 * Math.pow(remaining, 1.3)) });
+    for (const region of transient) region.heat *= 0.7;
+  }
+  state.walls = view.walls;
 }
 
 /** True when any metal wall carries heat blooms large enough to deform. */
@@ -222,8 +264,10 @@ export function tearRim(
   energy: number,
 ): Wall[] {
   const def = MATERIALS[material];
-  if (!def.isMetal && def.sag < 0.3) return walls;
-  const peel = Math.min(9, 2 + energy * 0.05) * def.sag;
+  if (!def.isMetal) return walls;
+  // Peel is work done by the arriving round: it scales with closing speed and
+  // the material's sag, so a slow round dents the lip and a fast one opens it.
+  const peel = Math.min(9, 1.4 + energy * 0.013) * def.sag;
   if (peel < 0.4) return walls;
   return walls.map((wall) => {
     if (wall.material !== material) return wall;

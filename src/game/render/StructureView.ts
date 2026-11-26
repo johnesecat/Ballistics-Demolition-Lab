@@ -303,7 +303,14 @@ export class StructureView {
       } else if ((material === 'concrete' || material === 'slopes') && width * height > 45) {
         for (let row = 0; row < 2; row += 1) for (let col = 0; col < 2; col += 1) g.fillRect(b.x - px + col * px, b.y - px + row * px, px, px);
       } else {
-        g.fillRect(b.x - px / 2, b.y - px / 2, px, px);
+        // A hot metal chip that landed soft is drawn with the shape it took: it
+        // spread across the face it hit instead of staying a cube.
+        const squash = b.squash ?? 0;
+        const along = b.squashAngle ?? 0;
+        const vertical = Math.abs(Math.sin(along)) >= Math.abs(Math.cos(along));
+        const w = px * (1 + (vertical ? squash * 0.9 : -squash * 0.45));
+        const h = px * (1 + (vertical ? -squash * 0.45 : squash * 0.9));
+        g.fillRect(b.x - w / 2, b.y - h / 2, w, h);
       }
     }
   }

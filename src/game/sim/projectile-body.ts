@@ -1,19 +1,23 @@
 import { MATERIALS, type MaterialId } from '../materials';
+import { JACKET_QUALITY, PENETRATOR_QUALITY } from './projectile-material';
+import { SHELL_CORE_FRACTION } from './projectile-shell';
 
 /**
- * Destructible projectile (Phase 4). A kinetic round is a layered pixel body:
- * steel casing, amber rear band, steel core, pale nose.
+ * The round as a penetrator body.
  *
- * Penetration is mass + speed against real layer thickness: each material has a
- * density and a kinetic resistance, so crossing a metre of plate costs a fixed
- * amount of speed for a given round. There is no thickness ceiling: a fast heavy
- * round bores a plate a light one only dents, and the thickness the round can
- * still pay for is exactly what it goes through. A round that runs out of speed
- * inside a layer pancakes against it.
+ * A kinetic round is two materials in one jacket: a copper jacket that mushrooms
+ * and absorbs energy, and a steel penetrator that does not. Penetration is
+ * momentum against real layer thickness: each material has a density and a
+ * kinetic resistance, so crossing a metre of plate costs a fixed amount of speed
+ * for a given round. There is no thickness ceiling -- what the round cannot pay
+ * for in speed is what stops it.
  *
- * On contact the body squashes (width grows, length shrinks) and sheds casing
- * fragments; the steel core is exposed. Explosive rounds are unaffected — their
- * phases detonate after penetration.
+ * Once the jacket has been battered past `RELEASE_INTEGRITY` (or the round runs
+ * out of speed on a face) the penetrator breaks free. A bare steel ogive needs
+ * far less energy per unit of plate than a jacketed ball round, so the released
+ * core can bore the layer the whole round just failed on. That is AP
+ * ammunition's entire trick, and it is why the strongest part of the projectile
+ * is the part that carries on.
  */
 
 export interface ProjectileBody {
@@ -25,7 +29,22 @@ export interface ProjectileBody {
   squash: number;
   /** Layers crossed so far (for diagnostics / speed loss audit). */
   layers: number;
+  /** Mass of the steel penetrator, derived from the round's own lattice. */
+  coreMass: number;
+  /** Mass of everything that is not the penetrator (jacket, band, cap). */
+  jacketMass: number;
+  /** Effective resistance multiplier: jacket 1, bare hard core ~0.56. */
+  quality: number;
+  /** The jacket has been shed; the penetrator is flying alone. */
+  shed: boolean;
 }
+
+/**
+ * Drive the bare core starts with. The round's momentum is what it is; the core
+ * is fresh but the shot is nearly spent, so releasing the jacket buys a couple
+ * of plate thicknesses, not a free ride through the whole battery.
+ */
+export const CORE_RELEASE_INTEGRITY = 0.35;
 
 /** Speed cost of crossing one wall layer of the given material/thickness. */
 export function penetrationCost(
@@ -33,8 +52,9 @@ export function penetrationCost(
   thickness: number,
   resistance: number,
   mass: number,
+  quality = JACKET_QUALITY,
 ): number {
-  const costPerUnit = (MATERIALS[material].density * 18 * resistance) / Math.max(0.2, mass);
+  const costPerUnit = (MATERIALS[material].density * 18 * resistance * quality) / Math.max(0.2, mass);
   return thickness * costPerUnit;
 }
 
@@ -48,7 +68,7 @@ export function crossLayer(
   thickness: number,
   resistance: number,
 ): number | null {
-  const cost = penetrationCost(material, thickness, resistance, body.mass);
+  const cost = penetrationCost(material, thickness, resistance, body.mass, body.quality);
   const next = body.speed - cost;
   body.layers += 1;
   // Squash grows as the round works hard against the layer.
@@ -66,5 +86,40 @@ export function crossLayer(
 
 /** Initial body from ammo flight data. Mass includes everything inside. */
 export function makeProjectileBody(mass: number, speed: number): ProjectileBody {
-  return { mass: Math.max(0.2, mass), speed: Math.max(0, speed), integrity: 1, squash: 0, layers: 0 };
+  const total = Math.max(0.2, mass);
+  const coreMass = total * SHELL_CORE_FRACTION;
+  return {
+    mass: total,
+    speed: Math.max(0, speed),
+    integrity: 1,
+    squash: 0,
+    layers: 0,
+    coreMass,
+    jacketMass: total - coreMass,
+    quality: JACKET_QUALITY,
+    shed: false,
+  };
+}
+
+/**
+ * Tear the jacket off. The core keeps the round's momentum (nothing teleports);
+ * what changes is that a hard ogive no longer has to drag a deforming copper
+ * jacket through the plate, so its effective resistance drops. Returns false when
+ * the jacket is already gone, so a shot can never shed twice.
+ */
+export function releaseJacket(body: ProjectileBody): boolean {
+  if (body.shed) return false;
+  body.shed = true;
+  body.quality = PENETRATOR_QUALITY;
+  // The battered part was the jacket, and it is no longer attached, so the core
+  // itself is sound -- but the shot's drive is almost spent, and that is what
+  // bounds how much further it can bore.
+  body.integrity = CORE_RELEASE_INTEGRITY;
+  body.squash = Math.min(0.55, body.squash);
+  return true;
+}
+
+/** Remaining speed after a layer if the jacket were shed first (for auditing). */
+export function coreCrossSpeed(body: ProjectileBody, material: MaterialId, thickness: number, resistance: number): number {
+  return body.speed - penetrationCost(material, thickness, resistance, body.mass, PENETRATOR_QUALITY);
 }

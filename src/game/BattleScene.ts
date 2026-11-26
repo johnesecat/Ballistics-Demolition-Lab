@@ -12,7 +12,7 @@ import { attachWallState, getWallState, simulateShotWalls } from './sim/wall-sim
 import { stepFragmentBodies, type FragmentBody } from './sim/fracture';
 import { deserializeDebris, serializeDebris, type DebrisRecord } from './sim/debris-save';
 import { coolHeat, type WallState } from './sim/walls';
-import { previewShot } from './sim/preview';
+import { previewShot, probeAim } from './sim/preview';
 import type { SoundName } from './audio';
 import { ammoRoundUrl } from '../ui/asset-url';
 import { Backdrop } from './render/Backdrop';
@@ -69,19 +69,6 @@ interface Playback {
 
 const ZOOM_SPEEDS = [0.1, 0.4, 1] as const;
 
-/** Latest wreck frame at or before the replay time, or -1 before it starts. */
-function wreckIndex(frames: Array<{ t: number }>, elapsed: number): number {
-  if (frames.length === 0 || elapsed < frames[0]!.t) return -1;
-  let low = 0;
-  let high = frames.length - 1;
-  while (low < high) {
-    const mid = (low + high + 1) >> 1;
-    if (frames[mid]!.t <= elapsed) low = mid;
-    else high = mid - 1;
-  }
-  return low;
-}
-
 /**
  * Battlefield rendering and replay presentation. The simulation is finished
  * before a replay starts, so changing speed, pausing or skipping can never
@@ -121,6 +108,8 @@ export class BattleScene extends Phaser.Scene {
   private preview: PreviewResult | null = null;
   private previewDirty = true;
   private lastPreviewSignature = '';
+  /** Last time the full body-resolution preview ran, for aim-drag throttling. */
+  private previewStamp = 0;
   private projectileBaseScaleX = 1;
   private projectileBaseScaleY = 1;
   private activePointers = new Map<number, Phaser.Input.Pointer>();
@@ -419,6 +408,9 @@ export class BattleScene extends Phaser.Scene {
   private findOpeningAim(stage: BuiltStage, ammo: AmmoDef): { angleDeg: number; power: number } {
     const fallback = { angleDeg: AIM.defaultDeg, power: POWER.default };
     if (!this.runtime) return fallback;
+    // The opening line is a heuristic, so it uses a cheap flight-only probe.
+    // Running the full body solve for every grid point (as the displayed
+    // preview does) stalled mission start on a phone.
     // Opening shots should read the front face first: bonus for the earliest
     // wall along the range instead of letting a rear truss win on angle alone.
     const frontX = Math.min(
@@ -426,9 +418,8 @@ export class BattleScene extends Phaser.Scene {
       Number.POSITIVE_INFINITY,
     );
     let best: { angleDeg: number; power: number; score: number } | null = null;
-    // Coarse probe: the full 4x20 sweep ran ~200 complete flight traces on the
-    // main thread at mission start, which stalled phones. A 6x40 grid finds
-    // the same opening line, and a confirmed core hit stops the search.
+    // Coarse probe: a 6x7 grid of cheap flight traces finds a sensible opening
+    // line; a confirmed core hit stops the search.
     for (let angle = 8; angle <= 70; angle += 6) {
       for (let power = 180; power <= 420; power += 40) {
         const input: ShotInput = {
@@ -438,19 +429,18 @@ export class BattleScene extends Phaser.Scene {
           ammoId: ammo.id,
           choiceId: ammo.choice?.defaultOption,
         };
-        let preview: PreviewResult | null = null;
+        let preview: ReturnType<typeof probeAim> | null = null;
         try {
-          preview = previewShot(stage.def, this.runtime, input);
+          preview = probeAim(stage.def, this.runtime, input);
         } catch {
           continue;
         }
-        if (!preview?.firstContact) continue;
+        if (!preview.firstContact) continue;
         const contactX = preview.firstContact.x;
         const frontBonus = Number.isFinite(frontX) ? Math.max(0, 12 - Math.max(0, contactX - frontX) / 18) : 0;
         const score =
           (preview.willHitCore ? 120 : 0) +
           (preview.willHitRelay ? 70 : 0) +
-          (preview.coverWarning ? 26 : 0) +
           frontBonus +
           10 -
           Math.abs(power - 300) / 40 -
@@ -583,7 +573,7 @@ export class BattleScene extends Phaser.Scene {
     this.setProjectileTexture(ammo);
     this.previewDirty = true;
     this.lastPreviewSignature = '';
-    this.refreshPreview();
+    this.refreshPreview(true);
     this.emitAim();
     this.callbacks.onReplayState?.({ phase: 'idle', speed: 1, elapsedMs: 0, durationMs: 0 });
     this.callbacks.onMessage?.(`${stage.def.code} — ${stage.def.name.toUpperCase()}`);
@@ -596,7 +586,7 @@ export class BattleScene extends Phaser.Scene {
     this.structure.setThermal(settings.thermalVision);
     if (this.built) this.backdrop.setTheme(this.built.def.theme, settings.reducedEffects);
     this.previewDirty = true;
-    if (this.mode === 'aiming') this.refreshPreview();
+    if (this.mode === 'aiming') this.refreshPreview(true);
   }
 
   getAim(): AimState {
@@ -696,7 +686,7 @@ export class BattleScene extends Phaser.Scene {
     this.callbacks.onAimChanged?.({ ...this.aim });
   }
 
-  private refreshPreview(): void {
+  private refreshPreview(force = false): void {
     if (!this.built || !this.runtime || this.mode !== 'aiming') {
       this.preview = null;
       this.previewGraphics.clear();
@@ -705,6 +695,15 @@ export class BattleScene extends Phaser.Scene {
       this.previewDirty = false;
       return;
     }
+    // The preview is now a real body solve, so a continuous drag must not run
+    // one every animation frame. It settles at most every 120 ms; the guide is
+    // a prediction, and firing always uses the aim itself, never this snapshot.
+    const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    if (!force && now - this.previewStamp < 120) {
+      this.previewDirty = true;
+      return;
+    }
+    this.previewStamp = now;
     const signature = `${this.aim.angleDeg}|${this.aim.power}|${this.aim.mode}|${this.aim.ammoId}|${this.aim.choiceId ?? ''}`;
     if (signature === this.lastPreviewSignature && !this.previewDirty) return;
     this.lastPreviewSignature = signature;
@@ -1028,7 +1027,7 @@ export class BattleScene extends Phaser.Scene {
     this.resetCamera();
     this.previewDirty = true;
     this.lastPreviewSignature = '';
-    this.refreshPreview();
+    this.refreshPreview(true);
     this.callbacks.onReplayState?.({
       phase: 'finished',
       speed: playback.speed,
@@ -1124,31 +1123,17 @@ export class BattleScene extends Phaser.Scene {
       angle += (next.angle - angle) * ratio;
       scale += (next.scale - scale) * ratio;
     }
+    // The one body model takes over the moment the round touches something: the
+    // shot baked its samples at 60 Hz, so the crush, the bore, the peeled jacket
+    // and the chips on the seabed are drawn exactly as they were solved.
+    const track = playback.result.track;
+    if (track && playback.elapsed >= track.t0) {
+      this.projectileView.drawTrack(track, playback.elapsed - track.t0, this.cameras.main.zoom);
+      this.projectile.setVisible(false);
+      return;
+    }
     const last = frames[frames.length - 1]!;
     if (playback.elapsed > last.t) {
-      // The casing does not freeze at the impact. It peels off, tumbles and
-      // settles along the deterministic wreck timeline produced by the solver.
-      const wreck = playback.result.wreck;
-      const index = wreckIndex(wreck, playback.elapsed);
-      if (index >= 0) {
-        const frame = wreck[index]!;
-        const ammo = this.getAmmo();
-        const body = makeProjectileBody(ammo.flight.mass ?? 1, 120);
-        body.squash = 1;
-        body.integrity = 0.3;
-        this.projectileView.draw(
-          frame.x,
-          frame.y,
-          frame.angle,
-          body,
-          34 * (ammo.flight.spriteScale ?? 1) * frame.scale,
-          frame.shell
-            ? { ...frame.shell, age: frame.shell.age + (playback.elapsed - frame.t) / 1000 }
-            : undefined,
-        );
-        this.projectile.setVisible(false);
-        return;
-      }
       this.projectile.setVisible(false);
       return;
     }
@@ -1169,7 +1154,9 @@ export class BattleScene extends Phaser.Scene {
       angle,
       body,
       34 * (ammo.flight.spriteScale ?? 1) * scale,
-      current.shell ? { ...current.shell } : undefined,
+      // Zoom drives the x-ray diagram: close enough and the round is drawn as
+      // labelled components instead of a silhouette.
+      this.cameras.main.zoom,
     );
     // The legacy texture sprite must stay hidden: drawing both produced the
     // doubled, wrong-looking bullet reported in the recordings review.

@@ -24,6 +24,8 @@
  * fold and detach first, heavy cells keep driving forward.
  */
 
+import type { ProjectileMaterialId } from './projectile-material';
+
 export type ShellPart =
   | 'rim'
   | 'light'
@@ -39,11 +41,37 @@ export type ShellPart =
   | 'rivet'
   | 'steel';
 
+export type ComponentId = 'jacket' | 'penetrator' | 'band' | 'cap';
+
+export interface ShellComponent {
+  id: ComponentId;
+  label: string;
+  material: ProjectileMaterialId;
+  /** Colour of the component's box in the zoomed x-ray diagram. */
+  color: number;
+}
+
+/**
+ * What the round is made of. The x-ray diagram, the component masses and the
+ * solver's per-part strength all read this one table, so a part can never be
+ * labelled one thing and behave as another.
+ */
+export const COMPONENTS: Record<ComponentId, ShellComponent> = {
+  jacket: { id: 'jacket', label: 'COPPER JACKET', material: 'copper', color: 0xe06a4e },
+  penetrator: { id: 'penetrator', label: 'STEEL PENETRATOR', material: 'steel', color: 0x7cc4e8 },
+  band: { id: 'band', label: 'DRIVING BAND', material: 'copper', color: 0xf2c14e },
+  cap: { id: 'cap', label: 'BOAT-TAIL', material: 'steel', color: 0x9b8ad6 },
+};
+
+export const COMPONENT_ORDER: readonly ComponentId[] = ['jacket', 'penetrator', 'band', 'cap'];
+
 export interface ShellCell {
   /** Local art cell coordinates: +x is forward (toward the nose). */
   x: number;
   y: number;
   part: ShellPart;
+  /** Which part of the round this cell belongs to (mass + x-ray identity). */
+  component: ComponentId;
   /** Casing colour hiding an interior cell (the steel core) while intact. */
   skin?: ShellPart;
   /** Damage a hidden cell needs before it becomes visible. Casing is always 0. */
@@ -124,7 +152,7 @@ function buildBase(): ShellCell[] {
       const mapped = PART_OF[ch];
       if (!mapped) continue;
       const part = ch === '#' ? ROW_PART[row] ?? 'body' : mapped;
-      const cell: ShellCell = { x: ART_LEFT + col, y: row - 3, part, reveal: 0 };
+      const cell: ShellCell = { x: ART_LEFT + col, y: row - 3, part, component: componentOfPart(part), reveal: 0 };
       cells.push(cell);
       byKey.set(`${cell.x}|${cell.y}`, cell);
     }
@@ -157,8 +185,8 @@ function buildBase(): ShellCell[] {
 
   // The band is proud: one extra cell of width at the base, so it reads as a
   // driving band rather than a painted stripe.
-  cells.push({ x: ART_LEFT + 1, y: 3, part: 'bandDark', reveal: 0 });
-  cells.push({ x: ART_LEFT + 2, y: 3, part: 'bandDark', reveal: 0 });
+  cells.push({ x: ART_LEFT + 1, y: 3, part: 'bandDark', component: 'band', reveal: 0 });
+  cells.push({ x: ART_LEFT + 2, y: 3, part: 'bandDark', component: 'band', reveal: 0 });
 
   // Hide the steel core under the casing. The core never adds a cell: the
   // in-flight silhouette stays exactly the sampled one.
@@ -171,7 +199,19 @@ function buildBase(): ShellCell[] {
       host.reveal = 0.22;
     }
   }
+  // Final component pass: every relabelling above (rim, highlight, rivet, nose)
+  // keeps the cell in the part of the round it physically sits in. Only the
+  // cells whose material was swapped for the hidden core become the penetrator.
+  for (const cell of cells) cell.component = componentOfPart(cell.part);
   return cells;
+}
+
+/** Which part of the round a cell of the given tone belongs to. */
+export function componentOfPart(part: ShellPart): ComponentId {
+  if (part === 'steel') return 'penetrator';
+  if (part === 'cap') return 'cap';
+  if (part === 'band' || part === 'bandLight' || part === 'bandDark') return 'band';
+  return 'jacket';
 }
 
 export const SHELL_BASE: readonly ShellCell[] = buildBase();
@@ -191,6 +231,22 @@ export function shellCellMass(cell: ShellCell): number {
 
 /** Total modelled mass of the pristine shell, in cell units. */
 export const SHELL_CELL_MASS = SHELL_BASE.reduce((sum, cell) => sum + shellCellMass(cell), 0);
+
+/**
+ * Mass of each component. The round's total mass is shared out by the lattice, so
+ * the penetrator's share is a property of the geometry and its material, never a
+ * per-ammo constant: a longer core is simply heavier.
+ */
+export const SHELL_COMPONENT_MASS: Record<ComponentId, number> = COMPONENT_ORDER.reduce(
+  (acc, id) => {
+    acc[id] = SHELL_BASE.reduce((sum, cell) => (cell.component === id ? sum + shellCellMass(cell) : sum), 0);
+    return acc;
+  },
+  { jacket: 0, penetrator: 0, band: 0, cap: 0 } as Record<ComponentId, number>,
+);
+
+/** Share of the round's mass carried by the steel penetrator, 0..1. */
+export const SHELL_CORE_FRACTION = SHELL_COMPONENT_MASS.penetrator / SHELL_CELL_MASS;
 
 /** Bounding box of a cell set, in whole cells. */
 export function shellBounds(cells: ShellCell[]): { width: number; height: number } {
