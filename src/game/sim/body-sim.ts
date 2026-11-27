@@ -153,6 +153,11 @@ interface Node {
   /** Cached material data: looked up once, not twice per spring per step. */
   mat: ProjectileMaterial;
   component: ComponentId;
+  /** 1 / max(0.2, mass): the spring pass runs millions of times, and a
+   * division per cell per link per substep is the difference between a phone
+   * resolve that fits and one that does not. Mass never changes after the
+   * cast, so the reciprocal is constant. */
+  invMass: number;
   heat: number;
   damage: number;
   free: boolean;
@@ -171,6 +176,16 @@ interface Link {
   stiffness: number;
   damage: number;
   broken: boolean;
+  /** Spring constant before heat softening; constant for the life of the link. */
+  kBase: number;
+  /** Damping coefficient before the same softening; sqrt(k * 0.5) * 0.6. */
+  dampBase: number;
+  /** min(soften) of the two materials: constant, so it is not re-read per step. */
+  softenMax: number;
+  conduct: number;
+  yieldStrain: number;
+  creep: number;
+  ductility: number;
 }
 
 function materialOf(component: ComponentId) {
@@ -252,6 +267,7 @@ export class ProjectileBodySim {
         damage: Math.min(0.75, (deps.crumple ?? 0) * 0.45),
         free: false,
         quality: QUALITY[base.component],
+        invMass: 0,
         nx: 0,
         ny: 0,
         touched: false,
@@ -260,6 +276,7 @@ export class ProjectileBodySim {
       // buckles symmetrically, but nudging the cast shape would open a hole in
       // the pristine silhouette.
       node.mass *= 1 + (noise2(base.x, base.y, this.seed % 100000) - 0.5) * 0.2;
+      node.invMass = 1 / Math.max(0.2, node.mass);
       this.nodes.push(node);
       this.totalMass += node.mass;
       index.set(`${base.x}|${base.y}`, this.nodes.length - 1);
@@ -276,18 +293,28 @@ export class ProjectileBodySim {
         const axial = dy === 0;
         const ma = materialOf(a.component);
         const mb = materialOf(b.component);
-        const ductility = Math.max(1 - ma.strength, 1 - mb.strength);
+        const stiffness = axial ? 0.62 : 0.3;
         const rest = Math.hypot(dx, dy) * this.cell;
+        const kBase = SPRING_K * stiffness;
         this.links.push({
           a: here,
           b: other,
           rest,
           rest0: rest,
-          stiffness: axial ? 0.62 : 0.3,
+          stiffness,
           damage: Math.min(0.6, (deps.crumple ?? 0) * 0.4),
           broken: false,
+          // Every one of these is a pure function of the two materials, which
+          // never change: the spring pass below runs ~750k times per shot, so
+          // taking the minima out of the loop is most of its cost.
+          kBase,
+          dampBase: 0.6 * Math.sqrt(0.5 * kBase),
+          softenMax: Math.min(ma.soften, mb.soften),
+          conduct: Math.min(ma.conduct, mb.conduct),
+          yieldStrain: Math.min(ma.yieldStrain, mb.yieldStrain),
+          creep: (ma.creep + mb.creep) * 0.5,
+          ductility: Math.max(1 - ma.strength, 1 - mb.strength),
         });
-        void ductility;
       }
     }
 
@@ -444,7 +471,11 @@ export class ProjectileBodySim {
     this.enforceVolume();
     // The wall patch has its own mass-spring clock. It runs before this step's
     // contacts so a push applied last step has already travelled outwards.
-    world.stepSoftBody?.(dt);
+    // It is a deformation model, not a force on the round, and the replay is
+    // only ever sampled at 60 Hz: integrating it at 120 Hz is the same picture
+    // for half the cost. Its clock is advanced with the real elapsed time, so
+    // the deformation advances at the same rate either way.
+    if (this.steps % 2 === 0) world.stepSoftBody?.(dt * 2);
     this.collide(world, dt);
     // Connectivity, spall and jacket failure are bookkeeping, not forces: at
     // 60 Hz they are indistinguishable on screen and cost a quarter as much as
@@ -692,34 +723,33 @@ export class ProjectileBodySim {
       const ny = dy / len;
       const strain = (len - link.rest) / link.rest;
       const heat = (a.heat + b.heat) * 0.5;
-      const ma = a.mat;
-      const mb = b.mat;
 
-      // Spring force, softened by heat, damped so the body settles.
-      const soften = 1 - heat * Math.min(ma.soften, mb.soften) * 0.72;
-      const k = SPRING_K * link.stiffness * soften;
+      // Spring force, softened by heat, damped so the body settles. k is
+      // kBase * soften and the damping is sqrt(k * 0.5) * 0.6, which factors
+      // into a constant times sqrt(soften): same value, one multiply less.
+      const soften = 1 - heat * link.softenMax * 0.72;
+      const k = link.kBase * soften;
       const vrel = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
-      const total = k * strain + 2 * Math.sqrt(k * 0.5) * 0.3 * vrel;
+      const total = k * strain + link.dampBase * Math.sqrt(soften) * vrel;
       if (!a.free) {
-        a.vx += (nx * total * dt) / Math.max(0.2, a.mass);
-        a.vy += (ny * total * dt) / Math.max(0.2, a.mass);
+        a.vx += nx * total * dt * a.invMass;
+        a.vy += ny * total * dt * a.invMass;
       }
       if (!b.free) {
-        b.vx -= (nx * total * dt) / Math.max(0.2, b.mass);
-        b.vy -= (ny * total * dt) / Math.max(0.2, b.mass);
+        b.vx -= nx * total * dt * b.invMass;
+        b.vy -= ny * total * dt * b.invMass;
       }
 
       // Conduction along the same link.
-      const conduct = Math.min(ma.conduct, mb.conduct);
-      const flow = (a.heat - b.heat) * conduct * dt * 6;
+      const flow = (a.heat - b.heat) * link.conduct * dt * 6;
       a.heat -= flow;
       b.heat += flow;
 
       // Plastic flow and cumulative ductile damage.
-      const yieldStrain = Math.min(ma.yieldStrain, mb.yieldStrain) * (1 + heat * 2.4);
+      const yieldStrain = link.yieldStrain * (1 + heat * 2.4);
       const excess = Math.abs(strain) - yieldStrain;
       if (excess <= 0) continue;
-      const creep = (ma.creep + mb.creep) * 0.5 * (0.35 + heat * 2.6);
+      const creep = link.creep * (0.35 + heat * 2.6);
       link.rest += (len - link.rest) * Math.min(0.35, excess * 6) * 0.05 * creep;
       link.rest = Math.max(link.rest0 * 0.72, Math.min(link.rest0 * 1.4, link.rest));
       a.damage = Math.min(1, a.damage + excess * dt * 7);
@@ -729,8 +759,7 @@ export class ProjectileBodySim {
       // steel link survives long enough to keep the penetrator recognisable.
       const tear = Math.abs(strain) - yieldStrain * 0.8;
       if (tear <= 0) continue;
-      const ductility = Math.max(1 - ma.strength, 1 - mb.strength);
-      const rate = (11 + ductility * 26) / (1 + heat * 1.1);
+      const rate = (11 + link.ductility * 26) / (1 + heat * 1.1);
       link.damage += tear * dt * rate;
       if (link.damage >= 1) link.broken = true;
     }
@@ -781,35 +810,42 @@ export class ProjectileBodySim {
       next[i] = head[at]!;
       head[at] = i + 1;
     }
-    const visit = (i: number, a: Node, jPlus: number): void => {
-      const b = nodes[jPlus - 1]!;
-      if (b.free) return;
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const dist2 = dx * dx + dy * dy;
-      if (dist2 >= minSep * minSep) return;
-      const dist = Math.sqrt(dist2);
-      const nx = dist > 1e-5 ? dx / dist : 0;
-      const ny = dist > 1e-5 ? dy / dist : 1;
-      const push = (minSep - dist) * 0.5;
-      const total = a.mass + b.mass;
-      a.x -= nx * push * (b.mass / total);
-      a.y -= ny * push * (b.mass / total);
-      b.x += nx * push * (a.mass / total);
-      b.y += ny * push * (a.mass / total);
-      void i;
-    };
+    // Each pair is considered once: from the cell that comes first in bucket
+    // order (down, then right), and inside a bucket by index. That is the same
+    // set of pairs the 3x3 sweep produced -- every node had nine buckets and a
+    // half-open index rule -- for five probes instead of nine. The contact loop
+    // runs on every substep, so this is the busiest loop in the solve.
+    const sep2 = minSep * minSep;
     for (let i = 0; i < nodes.length; i += 1) {
       const a = nodes[i]!;
       if (a.free) continue;
       const gx = Math.floor((a.x - ox0) / minSep);
       const gy = Math.floor((a.y - oy0) / minSep);
-      for (let yy = Math.max(0, gy - 1); yy <= Math.min(gh - 1, gy + 1); yy += 1) {
-        for (let xx = Math.max(0, gx - 1); xx <= Math.min(gw - 1, gx + 1); xx += 1) {
-          for (let j = head[yy * gw + xx]!; j !== -1; j = next[j - 1]!) {
-            if (j - 1 <= i) continue;
-            visit(i, a, j);
-          }
+      for (let k = 0; k < 5; k += 1) {
+        // (0,0) (1,0) (-1,1) (0,1) (1,1)
+        const dxCell = k === 1 || k === 4 ? 1 : k === 2 ? -1 : 0;
+        const dyCell = k === 0 || k === 1 ? 0 : 1;
+        const xx = gx + dxCell;
+        const yy = gy + dyCell;
+        if (xx < 0 || yy < 0 || xx >= gw || yy >= gh) continue;
+        const sameCell = k === 0;
+        for (let j = head[yy * gw + xx]!; j !== -1; j = next[j - 1]!) {
+          if (sameCell && j - 1 <= i) continue;
+          const b = nodes[j - 1]!;
+          if (b.free) continue;
+          const dx = b.x - a.x;
+          const dy = b.y - a.y;
+          const dist2 = dx * dx + dy * dy;
+          if (dist2 >= sep2) continue;
+          const dist = Math.sqrt(dist2);
+          const nx = dist > 1e-5 ? dx / dist : 0;
+          const ny = dist > 1e-5 ? dy / dist : 1;
+          const push = (minSep - dist) * 0.5;
+          const total = a.mass + b.mass;
+          a.x -= nx * push * (b.mass / total);
+          a.y -= ny * push * (b.mass / total);
+          b.x += nx * push * (a.mass / total);
+          b.y += ny * push * (a.mass / total);
         }
       }
     }

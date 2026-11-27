@@ -514,6 +514,7 @@ function applyCarves(
     const cells = list.map((pixel) => ({ x: pixel.x, y: pixel.y }));
     const metal = MATERIALS[wall.material].isMetal;
     const cut = subtractPixelCells(wall, cells, PIXEL, FRAGMENT_SIZE);
+    let lips: Array<Array<{ x: number; y: number }>> = [];
     if (cut.fragments.length > 0) {
       // The surviving rim keeps the shape the pixel soft body pushed it into:
       // each vertex samples the permanent displacement field of the rig.
@@ -525,7 +526,7 @@ function applyCarves(
       // The pixels dragged into the hole are geometry, not a sprite: the
       // surviving rim grows a tongue of torn metal exactly where the soft body
       // pushed it, which is the curled lip the footage shows.
-      const lips = metal ? pixels.lipPolygons(dir.x, dir.y, 120) : [];
+      lips = metal ? pixels.lipPolygons(dir.x, dir.y, 120) : [];
       state.walls = state.walls.map((w) => (w.id === wall.id ? { ...cut.wall, polygons: lips.length > 0 ? [...bent, ...lips] : bent } : w));
       // Chips carry the round's momentum, not a fixed kick. A thin plate sheds a
       // handful of torn pieces, not a cloud: keep the largest, bounded.
@@ -576,6 +577,24 @@ function applyCarves(
           8 - t * 3,
           wall.material,
         );
+      }
+      // The flap is metal the round dragged out of the breach, so it is as hot
+      // as the rim it grew from. Without its own stamp the tongue is drawn in
+      // cold plate colour and reads as a sticker pasted over the hole; mid-heat
+      // is the amber-red of worked steel, the tint the entry frames show on the
+      // hanging fold.
+      for (const lip of lips) {
+        let cx = 0;
+        let cy = 0;
+        for (const point of lip) { cx += point.x; cy += point.y; }
+        cx /= lip.length;
+        cy /= lip.length;
+        let span = 0;
+        for (const point of lip) span = Math.max(span, Math.hypot(point.x - cx, point.y - cy));
+        // 0.78 on the hot-metal ramp is amber-orange; anything cooler sits in
+        // the ramp's violet-red band and reads as paint rather than scorched
+        // steel.
+        addHeat(state, cx, cy, 0.78, Math.max(7, Math.min(18, span * 1.15)), wall.material);
       }
       // The rim itself is white-hot: two tight stamps just outside the carved
       // cells keep the breach's edge red/amber instead of letting the cooler

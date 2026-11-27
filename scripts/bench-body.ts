@@ -113,38 +113,22 @@ const catchUp = new ProjectileBodySim({
 const catchUpMs = timeIt(() => catchUp.advance(0.5, new WallPixels(walls, WORLD.groundY))).ms;
 
 // --- Whole-shot cost, including wall damage and the replay bake -------------
-// What the player actually pays is measured, not V8's first-ever run of the
-// bytecode. On a device the aim screen has already run this same solver on
-// every pointer move (the preview is the shot, with damage off), so the shot
-// that gets fired is never the first execution of the flight or the contact
-// loop. The cold resolve is still measured and reported below -- it is the
-// first shot a campaign ever fires -- but the budget is on the solve a player
-// pays for shot after shot.
+// Everything the resolve costs is measured here, including the first solve the
+// process ever runs. There is no warm-up pass and no pass is discarded: the
+// first shot of a campaign runs exactly this code cold, so hiding it outside
+// the measurement would only describe a machine that has already been paid for.
+// Five passes over the same five powers, and the guard is the median of all 25
+// measured shots -- a single fast pass cannot carry the result.
 const previewInput = (power: number): { angleDeg: number; power: number; mode: 'arc'; ammoId: string } => ({ angleDeg: 26, power, mode: 'arc', ammoId: 'aphe-hybrid' });
-for (let i = 0; i < 2; i += 1) {
-  simulateShotWalls(built.def, snapshot, previewInput(200 + i * 40), { damage: false });
-}
-const coldMs = timeIt(() => simulateShotWalls(built.def, snapshot, previewInput(200))).ms;
-
-// Five passes over the same five powers, first pass included: no warm-up pass
-// is thrown away, so every number here is a resolve the game would have paid.
-// The guard takes the cleanest pass. This machine is shared, and contention can
-// only ever add time to a measurement -- a pass that was descheduled mid-solve
-// says nothing about the code, while the cleanest pass is the best estimate of
-// what the code costs. The median across all 25 shots is reported beside it so
-// the spread stays visible.
+// Powers that all reach the battery: a shot that misses costs nothing to
+// resolve, and timing it would drag the median down with work nobody did.
+const POWERS = [200, 235, 270, 305, 340];
 const shotTimes: number[] = [];
-const passMedians: number[] = [];
-for (let pass = 0; pass < 5; pass += 1) {
-  const passTimes: number[] = [];
-  for (let i = 0; i < 5; i += 1) {
-    const time = timeIt(() => simulateShotWalls(built.def, snapshot, previewInput(200 + i * 40))).ms;
-    passTimes.push(time);
-    shotTimes.push(time);
-  }
-  passMedians.push(median(passTimes));
+for (let i = 0; i < 25; i += 1) {
+  shotTimes.push(timeIt(() => simulateShotWalls(built.def, snapshot, previewInput(POWERS[i % 5]!))).ms);
 }
-const steadyMs = Math.min(...passMedians);
+const steadyMs = median(shotTimes);
+const coldMs = shotTimes[0]!;
 const shot = simulateShotWalls(built.def, snapshot, { angleDeg: 26, power: 200, mode: 'arc', ammoId: 'aphe-hybrid' });
 const trackBytes = shot.result.track
   ? shot.result.track.times.byteLength + shot.result.track.xs.byteLength + shot.result.track.ys.byteLength
@@ -181,9 +165,10 @@ console.log(`  wall raster          ${ms(results.rasterMs)} for ${solid} pixels 
 console.log(`  replay frame (1/60s) median ${ms(results.frameMedianMs)}  p95 ${ms(results.frameP95Ms)}  worst ${ms(results.frameWorstMs)}`);
 console.log(`  contact window       ${frames} frames, ${ms(results.totalSolveMs)} total`);
 console.log(`  catch-up (0.5 s)     ${ms(results.catchUpHalfSecondMs)}`);
-console.log(`  whole shot resolve   best pass median ${ms(results.steadyMs)}  median ${ms(results.shotMedianMs)} over ${shotTimes.length} shots  worst ${ms(results.shotWorstMs)}  first ever ${ms(results.coldShotMs)}`);
+console.log(`  whole shot resolve   median ${ms(results.steadyMs)}  best ${ms(Math.min(...shotTimes))}  worst ${ms(results.shotWorstMs)} over ${shotTimes.length} shots  first ever ${ms(results.coldShotMs)}`);
 console.log(`  baked track          ${results.trackFrames} frames, ${(trackBytes / 1024).toFixed(1)} KiB`);
 console.log(`  phone estimate x${phoneFactor}: frame ${ms(results.frameMedianMs * phoneFactor)}${results.frameMedianMs * phoneFactor > 16.7 ? ' (over a 60 Hz budget)' : ' (inside a 60 Hz budget)'}, resolve ${ms(results.steadyMs * phoneFactor)}, first shot ${ms(results.coldShotMs * phoneFactor)}`);
+console.log(`  resolve guard        median of all ${shotTimes.length} measured shots, x${phoneFactor}`);
 
 // The device never steps the body: playback only draws the baked track, so the
 // per-frame number above is what the replay would cost *if* anything ever

@@ -70,6 +70,9 @@ export class WallPixels implements BodyWorld {
   private nRestX = new Float32Array(0);
   private nRestY = new Float32Array(0);
   private nMass = new Float32Array(0);
+  /** 1 / nMass: the rig's spring pass divides by mass on both ends of every
+   * link, and the reciprocal is constant once the rig is built. */
+  private nInvMass = new Float32Array(0);
   private nMaterial = new Uint8Array(0);
   private nCell = new Int32Array(0);
   private nPinned = new Uint8Array(0);
@@ -315,6 +318,7 @@ export class WallPixels implements BodyWorld {
     this.nRestX = new Float32Array(n);
     this.nRestY = new Float32Array(n);
     this.nMass = new Float32Array(n);
+    this.nInvMass = new Float32Array(n);
     this.nMaterial = new Uint8Array(n);
     this.nCell = new Int32Array(n);
     this.nPinned = new Uint8Array(n);
@@ -347,6 +351,7 @@ export class WallPixels implements BodyWorld {
       this.nMaterial[i] = mat;
       this.nCell[i] = at;
       this.nMass[i] = Math.max(0.5, def.density * PIXEL * PIXEL);
+      this.nInvMass[i] = 1 / this.nMass[i]!;
       nodeIndex[at] = i;
     }
     // The ends of the component along its thin axis are the bolted edges. A
@@ -564,12 +569,14 @@ export class WallPixels implements BodyWorld {
         const vrel = (this.nVX[other]! - this.nVX[index]!) * nx + (this.nVY[other]! - this.nVY[index]!) * ny;
         const force = this.linkK[k]! * strain + this.linkDamp[k]! * vrel;
         if (!this.nPinned[index] && this.nAwakeTime[index]! > 0) {
-          this.nVX[index] = this.nVX[index]! + (nx * force * dt) / this.nMass[index]!;
-          this.nVY[index] = this.nVY[index]! + (ny * force * dt) / this.nMass[index]!;
+          const inv = this.nInvMass[index]!;
+          this.nVX[index] = this.nVX[index]! + nx * force * dt * inv;
+          this.nVY[index] = this.nVY[index]! + ny * force * dt * inv;
         }
         if (!this.nPinned[other] && this.nAwakeTime[other]! > 0) {
-          this.nVX[other] = this.nVX[other]! - (nx * force * dt) / this.nMass[other]!;
-          this.nVY[other] = this.nVY[other]! - (ny * force * dt) / this.nMass[other]!;
+          const inv = this.nInvMass[other]!;
+          this.nVX[other] = this.nVX[other]! - nx * force * dt * inv;
+          this.nVY[other] = this.nVY[other]! - ny * force * dt * inv;
         }
         // Plastic flow: past yield the rest length follows the stretch, so the
         // dent stays after the springs unload.
@@ -734,14 +741,16 @@ export class WallPixels implements BodyWorld {
       const rootA = aSum / group.length;
       const dragged = Math.hypot(dxSum / group.length, dySum / group.length);
       // The tongue reaches as far as the metal was dragged, capped so a deep
-      // bore cannot grow a spike. It is a flap the width of the breach and about
-      // as tall again: a nib at the hole's edge reads as a torn pixel, not as a
-      // plate that folded.
-      const reach = Math.min(18, 5 + dragged * 5);
-      // The fold spans the rim it grew from: a hole's whole edge folds, leaving
-      // the rest of the breach dark.
+      // bore cannot grow a spike. It hangs about half the width of the tear,
+      // which is what the entry frames show: a flap that reaches the bottom of
+      // the breach, not a nib at its edge.
+      const reach = Math.min(26, 8 + dragged * 6);
+      // The fold spans the rim it grew from. A punched plate folds a flap as
+      // wide as the hole it left -- capping this at a few pixels grew a pair of
+      // wings instead of a tongue, and the footage's flap covers most of the
+      // breach.
       const mid = (tMin + tMax) * 0.5;
-      const halfSpan = Math.min(tMax - tMin, PIXEL * 7) * 0.5 + PIXEL;
+      const halfSpan = Math.min((tMax - tMin) * 0.5 + PIXEL, 20);
       // Metal punched by a round petals BACK toward the shooter and sags: it
       // does not keep travelling into the bore, where it would be hidden behind
       // the plate. This is the direction the flap is visible from.
@@ -752,8 +761,9 @@ export class WallPixels implements BodyWorld {
       const tipY = foldY / foldLen;
       const rootX = toX(mid, rootA);
       const rootY = toY(mid, rootA);
-      // Tapered tongue: the free end is narrower than the fold line.
-      const narrow = halfSpan * 0.55;
+      // Tapered tongue: the free end is narrower than the fold line, so the
+      // silhouette reads as folded metal rather than a rectangle pasted on.
+      const narrow = halfSpan * 0.45;
       out.push([
         { x: rootX - tx * halfSpan, y: rootY - ty * halfSpan },
         { x: rootX + tx * halfSpan, y: rootY + ty * halfSpan },
