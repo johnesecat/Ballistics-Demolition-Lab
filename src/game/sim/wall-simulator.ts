@@ -11,7 +11,7 @@ import { fractureWall, fractureWallBand, penetrateWalls, spawnFragmentBodies, su
 import type { DamageEvent, EffectEvent, ImpactInfo, ProjectileFrame, ShotInput, ShotResult } from './types';
 import { addHeat, cloneWallState, detachUnsupported, pointInPolygon, wallsFromSnapshot, type WallState } from './walls';
 import { survivorHeatPoint } from './heat-anchor';
-import { settleHotMetal } from './wall-deform';
+import { settleHotMetal, tearRim } from './wall-deform';
 import { BODY_CELL, BODY_DT, PIXEL, ProjectileBodySim, packTrack, type BodyTrack } from './body-sim';
 import { WallPixels } from './wall-pixels';
 
@@ -335,7 +335,17 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
   if (damage && impact && (impact.kind === 'cell' || impact.kind === 'ground')) {
     const incoming = norm(vx, vy);
     const origin: Point = { x: impact.x - impact.nx * 2, y: impact.y - impact.ny * 2 };
-    const phaseQueue = phases.map(p => ({ phase: p, t: impactTime + ((p.at ?? 0) / 1000) })).sort((a, b) => a.t - b.t);
+    // A kinetic round that bored clean through the plate has already made its
+    // hole with pixels. Firing its scripted punch channel afterwards cut a
+    // second, diagonal breach through the same plate -- a second damage model
+    // on top of the one-body solve, and the reason a neat entry became a torn
+    // corner. The punch only runs when the body stopped in the wall.
+    const bodyExited = body !== null && !body.isResting && body.layers > 0;
+    const kinetic = ammo.vfx.family === 'kinetic';
+    const phaseQueue = phases
+      .filter(p => !(kinetic && bodyExited && (p.kind === 'pierce' || p.kind === 'drill')))
+      .map(p => ({ phase: p, t: impactTime + ((p.at ?? 0) / 1000) }))
+      .sort((a, b) => a.t - b.t);
     for (const { phase, t } of phaseQueue) {
       const tMs = t * 1000;
       const bodyMark = bodies.length;
@@ -475,6 +485,7 @@ function applyCarves(
     else byWall.set(pixel.wall, [pixel]);
   }
   const newBodies: FragmentBody[] = [];
+  const metalEntries: Array<{ x: number; y: number; material: MaterialId }> = [];
   let fragments = 0;
   for (const [wallIndex, list] of byWall) {
     const wall = walls[wallIndex];
@@ -494,40 +505,114 @@ function applyCarves(
     // no bbox stamp any more: entry lip, taper, bore and exit are the pixel
     // boundary of what mass x speed actually took.
     const cells = list.map((pixel) => ({ x: pixel.x, y: pixel.y }));
+    const metal = MATERIALS[wall.material].isMetal;
     const cut = subtractPixelCells(wall, cells, PIXEL, FRAGMENT_SIZE);
     if (cut.fragments.length > 0) {
       // The surviving rim keeps the shape the pixel soft body pushed it into:
-      // each vertex samples the permanent displacement field of the patch.
+      // each vertex samples the permanent displacement field of the rig.
       const bent = cut.wall.polygons.map((poly) => poly.map((point) => {
         const d = pixels.deformationAt(point.x, point.y);
         if (!d) return { ...point };
         return { x: point.x + d.x, y: point.y + d.y };
       }));
-      state.walls = state.walls.map((w) => (w.id === wall.id ? { ...cut.wall, polygons: bent } : w));
-      // Chips carry the round's momentum, not a fixed kick.
-      const kick = Math.min(220, impactSpeed * 0.22);
+      // The pixels dragged into the hole are geometry, not a sprite: the
+      // surviving rim grows a tongue of torn metal exactly where the soft body
+      // pushed it, which is the curled lip the footage shows.
+      const lips = metal ? pixels.lipPolygons(dir.x, dir.y, 120) : [];
+      state.walls = state.walls.map((w) => (w.id === wall.id ? { ...cut.wall, polygons: lips.length > 0 ? [...bent, ...lips] : bent } : w));
+      // Chips carry the round's momentum, not a fixed kick. A thin plate sheds a
+      // handful of torn pieces, not a cloud: keep the largest, bounded.
       const chips = spawnFragmentBodies(
         cut.fragments,
         { x: entry.x, y: entry.y },
-        { x: dir.x * kick, y: dir.y * kick - 26 },
+        { x: dir.x * Math.min(220, impactSpeed * 0.22), y: dir.y * Math.min(220, impactSpeed * 0.22) - 26 },
         seedFrom(simTime * 1000, rng),
         heatScale,
       );
-      newBodies.push(...chips);
+      const shed = metal ? largest(chips, 20) : chips;
+      newBodies.push(...shed);
       fragments += cut.fragments.length;
       effects.push({ t: simTime * 1000, kind: 'penetrate', x: exit.x, y: exit.y, angle: Math.atan2(dir.y, dir.x), family: ammo.vfx.family, material: wall.material });
     }
-    const metal = MATERIALS[wall.material].isMetal;
-    addHeat(state, entry.x, entry.y, metal ? 0.55 + heatScale * 0.45 : 0.4 + heatScale * 0.4, metal ? 14 + heatScale * 10 : 10 + heatScale * 8, wall.material);
+    const metalWall = metal;
+    // The hole's own centre, not the pre-contact standoff point: a round of
+    // radius 2.5 touches the face before its centre reaches it, so a bloom
+    // centred on `entry` burns the air in front of the plate and leaves the
+    // actual rim cold.
+    let holeX = 0;
+    let holeY = 0;
+    for (const pixel of list) { holeX += pixel.x; holeY += pixel.y; }
+    holeX /= list.length;
+    holeY /= list.length;
+    addHeat(state, holeX, holeY, metalWall ? 1 : 0.4 + heatScale * 0.4, metalWall ? 6 + heatScale * 3 : 10 + heatScale * 8, wall.material);
+    if (metalWall) {
+      // The scorch hedge. A scorch on a plate is a band along the metal, hottest
+      // against the breach and cooling through red and amber into a violet
+      // fringe at each end -- not a disc, because a thin plate only keeps the
+      // part of the bloom that lands on it. Stamping along the face tangent
+      // gives the continuous band the footage shows; a ring of blooms reads as
+      // confetti because only isolated stamps land on the plate.
+      const tx = -dir.y;
+      const ty = dir.x;
+      const reach = 26 + heatScale * 18;
+      for (let d = -reach; d <= reach; d += 5) {
+        const t = Math.abs(d) / reach;
+        addHeat(
+          state,
+          holeX + tx * d,
+          holeY + ty * d,
+          0.9 - t * 0.52,
+          7.5 - t * 2.5,
+          wall.material,
+        );
+      }
+      // The rim itself is white-hot: two tight stamps just outside the carved
+      // cells keep the breach's edge red/amber instead of letting the cooler
+      // band wash the whole ring violet. The hole's own extent along the face
+      // decides where its edge is; a fixed radius lands inside the hole and is
+      // thrown away with it.
+      let halfSpan = 0;
+      for (const pixel of list) {
+        halfSpan = Math.max(halfSpan, Math.abs((pixel.x - holeX) * tx + (pixel.y - holeY) * ty));
+      }
+      for (const side of [-1, 1]) {
+        addHeat(state, holeX + tx * side * (halfSpan + 2), holeY + ty * side * (halfSpan + 2), 1, 4.5, wall.material);
+      }
+      metalEntries.push({ x: holeX, y: holeY, material: wall.material });
+    }
     // Heat along the channel the round actually carved.
     for (let i = 0; i < list.length; i += 6) {
       const pixel = list[i]!;
-      addHeat(state, pixel.x, pixel.y, 0.45 + heatScale * 0.4, 10 + heatScale * 6, pixel.material);
+      addHeat(state, pixel.x, pixel.y, 0.62 + heatScale * 0.3, 6 + heatScale * 4, pixel.material);
     }
+  }
+  // The torn rim is bowed by the heat the bore put into it, before support is
+  // solved, so a plate that has just been punched keeps the bow in its frozen
+  // shape. `tearRim` adds the vertices a four-corner plate cannot bend without.
+  if (metalEntries.length > 0) {
+    for (const hit of metalEntries) state.walls = tearRim(state.walls, hit, 16, hit.material, impactSpeed);
+    settleHotMetal(state, { steps: 6 });
   }
   bodies.push(...newBodies);
   void walls;
   return { fragments, newBodies };
+}
+
+/** The largest `n` bodies, in their original order (deterministic). */
+function largest(bodies: FragmentBody[], n: number): FragmentBody[] {
+  if (bodies.length <= n) return bodies;
+  const area = (body: FragmentBody): number => {
+    let sum = 0;
+    const poly = body.fragment.polygon;
+    for (let i = 0; i < poly.length; i += 1) {
+      const a = poly[i]!;
+      const b = poly[(i + 1) % poly.length]!;
+      sum += a.x * b.y - b.x * a.y;
+    }
+    return Math.abs(sum) * 0.5;
+  };
+  const keep = new Set(bodies.map((body, i) => ({ i, a: area(body) })).sort((x, y) => y.a - x.a).slice(0, n).map((e) => e.i));
+  return bodies.filter((_, i) => keep.has(i));
 }
 
 /** Punch the round's own diameter through a wall it crosses. */

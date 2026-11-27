@@ -370,7 +370,7 @@ export class StructureView {
           // amber and read as gold tiles; the footage keeps the bright burn
           // tight to the breach and lets it fade within about a third of the
           // bloom radius.
-          const heat = r.heat * Math.pow(1 - frac, 1.9);
+          const heat = r.heat * Math.pow(1 - frac, 2.6);
           if (heat < 0.1) continue;
           const key = gy * cols + gx;
           const prev = field.get(key);

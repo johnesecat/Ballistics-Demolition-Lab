@@ -143,6 +143,26 @@ function runToRest(sim: ProjectileBodySim, world: BodyWorld, seconds = 1.5): voi
   const woodDent = woodWorld.deformationAt(30, 0)!;
   assert(Math.hypot(woodDent.x, woodDent.y) > Math.hypot(steelDent.x, steelDent.y), 'wood deforms further than steel under the same contact');
 
+  // The rig is the whole connected wall, not a 22-unit disc: every solid pixel
+  // of the plate is a node, and only its bolted ends are pinned. A push is then
+  // carried into metal far outside any local patch, and the surviving rim of a
+  // hole is dragged into the breach as lip geometry.
+  const whole = plateWorld();
+  whole.armSoftBody(30, 0);
+  const rig = whole.softBodyStats();
+  assert.equal(rig.nodes, 600, `every connected pixel is rigged (${rig.nodes})`);
+  assert(rig.pinned > 0 && rig.pinned < rig.nodes / 2, `only the plate's ends are pinned (${rig.pinned})`);
+  for (let i = 0; i < 20; i += 1) {
+    whole.push(30, 0, 600, 0, 2);
+    whole.stepSoftBody(BODY_DT);
+  }
+  const carried = whole.softBodyStats();
+  assert(carried.moved > 8, `the push travels through the connected plate (${carried.moved} pixels moved)`);
+  whole.carve(33, 1);
+  const lips = whole.lipPolygons(1, 0, 32);
+  assert(lips.length > 0, `a hole in torn metal grows a lip (${lips.length} quads)`);
+  assert(lips.every((quad) => quad.length === 4), 'each lip quad is a closed four-point strip');
+
   // Removing a pixel is what makes the hole: the lattice loses exactly it and
   // the detached pixel no longer contributes a rim offset.
   const solid = world.solidCount;

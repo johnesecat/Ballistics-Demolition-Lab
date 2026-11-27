@@ -614,7 +614,10 @@ export function heatColor(heat: number, base?: number): number {
   if (t >= 0.92) return 0xffffff;
   if (base !== undefined) {
     const ramp = heatColor(heat);
-    const mix = 0.35; // 35% material hue, 65% blackbody — dynamically chosen from the material
+    // A little of the parent metal keeps the colour specific to steel without
+    // desaturating the hot bands into mauve: the footage's scorch is vivid
+    // violet, red and amber, not a uniform purple wash.
+    const mix = 0.18;
     const r = Math.round((((ramp >> 16) & 0xff) * (1 - mix) + ((base >> 16) & 0xff) * mix));
     const g = Math.round((((ramp >> 8) & 0xff) * (1 - mix) + ((base >> 8) & 0xff) * mix));
     const b = Math.round(((ramp & 0xff) * (1 - mix) + (base & 0xff) * mix));

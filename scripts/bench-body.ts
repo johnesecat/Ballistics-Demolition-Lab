@@ -113,6 +113,12 @@ const catchUp = new ProjectileBodySim({
 const catchUpMs = timeIt(() => catchUp.advance(0.5, new WallPixels(walls, WORLD.groundY))).ms;
 
 // --- Whole-shot cost, including wall damage and the replay bake -------------
+// A device is already running when a shot is resolved: warm the JIT and the
+// allocator first, exactly as the game has by the time the player fires. Cold
+// start-up is not what the resolve budget is about.
+for (let i = 0; i < 2; i += 1) {
+  simulateShotWalls(built.def, snapshot, { angleDeg: 26, power: 200, mode: 'arc', ammoId: 'aphe-hybrid' });
+}
 const shotTimes: number[] = [];
 for (let i = 0; i < 5; i += 1) {
   shotTimes.push(timeIt(() => simulateShotWalls(built.def, snapshot, { angleDeg: 26, power: 200 + i * 40, mode: 'arc', ammoId: 'aphe-hybrid' })).ms);
@@ -124,6 +130,7 @@ const trackBytes = shot.result.track
   : 0;
 
 const stats = sim.stats();
+console.log("wall rig", pixels.softBodyStats());
 const results = {
   rasterMs: raster.ms,
   solidPixels: solid,

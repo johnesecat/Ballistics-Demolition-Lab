@@ -402,8 +402,10 @@ export class EffectDirector {
         this.kineticImpact(event.x, event.y, r, event.angle ?? 0, material);
         break;
     }
-    this.scorchAt(event.x, event.y, r * 0.85);
-    if (family !== 'jet') this.materialParticles(event.x, event.y, material, this.reduced ? 3 : 8, 1.2);
+    // A hot steel face is scorched violet and amber, not sooted black; only the
+    // non-metals keep the soot stamp.
+    if (!metal) this.scorchAt(event.x, event.y, r * 0.85);
+    if (family !== 'jet') this.materialParticles(event.x, event.y, material, metal ? (this.reduced ? 2 : 4) : (this.reduced ? 3 : 8), 1.2);
     this.sound(MATERIAL_SOUND[material]);
     const heavyBlast = family === 'he' || family === 'hesh' || family === 'popcorn';
     this.shake(heavyBlast ? 140 : metal ? 110 : 85, heavyBlast ? 0.0062 : metal ? 0.0052 : 0.0038);
@@ -489,8 +491,101 @@ export class EffectDirector {
     });
   }
 
+  /**
+   * Kinetic entry on steel. The footage frame (imp_a) is a white-hot core on the
+   * plate face, a violet-to-amber scorch hedge running along the metal each side
+   * of the hole, a wide fan of embers thrown back out of the entry, and only a
+   * handful of torn chips. It is a face event, not a spark cone: the bloom is
+   * large and lasts long enough to read at 60 fps.
+   */
+  private metalEntry(x: number, y: number, r: number, angle: number, material: MaterialId): void {
+    const radius = Math.max(17, r * 1.55);
+    const bloom = this.scene.add.container(x, y).setDepth(36);
+    const g = this.scene.add.graphics();
+    g.setBlendMode(Phaser.BlendModes.ADD);
+    this.pixelDisc(g, 0, 0, radius, 0xff7a24, 0.34);
+    this.pixelDisc(g, 0, 0, radius * 0.7, 0xffc06a, 0.64);
+    this.pixelDisc(g, 0, 0, radius * 0.4, 0xfff4dc, 0.92);
+    this.pixelDisc(g, 0, 0, Math.max(2, radius * 0.16), 0xffffff, 1);
+    bloom.add(g);
+    bloom.setScale(0.55);
+    this.addTransient(bloom);
+    this.scene.tweens.add({
+      targets: bloom,
+      scale: this.reduced ? 1.05 : 1.3,
+      alpha: 0,
+      duration: 260,
+      ease: 'Quad.easeOut',
+      onComplete: () => bloom.destroy(),
+    });
+
+    // Violet scorch hedge. It is laid along the face (the tangent), so it hugs
+    // the plate instead of haloing into the air; the permanent heat field keeps
+    // the same ring once the flash is gone.
+    const band = this.scene.add.graphics().setDepth(33);
+    const tangent = angle + Math.PI / 2;
+    let seed = ((Math.round(x) * 83492791) ^ (Math.round(y) * 2654435761)) >>> 0;
+    const random = (): number => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 4294967296;
+    };
+    for (let i = -15; i <= 15; i += 1) {
+      const t = i / 15;
+      const along = t * radius * 1.5;
+      const off = (random() - 0.5) * 2.4;
+      const px = x + Math.cos(tangent) * along + Math.cos(angle) * off;
+      const py = y + Math.sin(tangent) * along + Math.sin(angle) * off;
+      const cool = Math.abs(t) > 0.5;
+      band.fillStyle(cool ? 0x7b5bd6 : 0xc2552a, 0.72 - Math.abs(t) * 0.3);
+      band.fillRect(px - 1, py - 1, random() < 0.3 ? 4 : 2, 2);
+    }
+    this.addTransient(band);
+    this.scene.tweens.add({
+      targets: band,
+      alpha: 0,
+      duration: 620,
+      ease: 'Quad.easeOut',
+      onComplete: () => band.destroy(),
+    });
+
+    // Embers thrown back out of the entry: a wide fan, orange and violet.
+    const back = Phaser.Math.RadToDeg(angle + Math.PI);
+    addPixelParticles(this.scene, x, y, 'spark', {
+      count: this.reduced ? 8 : 26,
+      color: 0xffb168,
+      speedMin: 120,
+      speedMax: 430,
+      lifespanMin: 110,
+      lifespanMax: 380,
+      gravityY: 330,
+      scaleMin: 1,
+      scaleMax: 0.2,
+      angleMin: back - 70,
+      angleMax: back + 70,
+      blend: Phaser.BlendModes.ADD,
+    });
+    addPixelParticles(this.scene, x, y, 'px-1', {
+      count: this.reduced ? 5 : 12,
+      color: 0x9f8cff,
+      speedMin: 70,
+      speedMax: 300,
+      lifespanMin: 150,
+      lifespanMax: 470,
+      gravityY: 240,
+      blend: Phaser.BlendModes.ADD,
+      angleMin: back - 88,
+      angleMax: back + 88,
+    });
+    this.spawnDebris(x, y, material, this.reduced ? 2 : 5, 0.32);
+    this.glowAt(x, y, radius * 1.15, 0xffb060, 340, 0.3);
+  }
+
   /** Solid / APHE: a tight bright spark cone driven into the plate. */
   private kineticImpact(x: number, y: number, r: number, angle: number, material: MaterialId): void {
+    if (material === 'steel' || material === 'armor') {
+      this.metalEntry(x, y, r, angle, material);
+      return;
+    }
     this.flashAt(x, y, r * 0.55, 0xffe6b8, 0.9);
     this.glowAt(x, y, r * 0.5, 0xffcf8f, 200, 0.22);
     const back = angle + Math.PI;
