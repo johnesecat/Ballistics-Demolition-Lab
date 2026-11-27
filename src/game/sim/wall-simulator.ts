@@ -493,6 +493,8 @@ function applyCarves(
   }
   const newBodies: FragmentBody[] = [];
   const metalEntries: Array<{ x: number; y: number; material: MaterialId }> = [];
+  /** Torn lips, appended after the hot-metal settle so nothing re-splits them. */
+  const pendingFolds: Array<{ wallId: string; lips: Array<Array<{ x: number; y: number }>> }> = [];
   let fragments = 0;
   for (const [wallIndex, list] of byWall) {
     const wall = walls[wallIndex];
@@ -525,9 +527,17 @@ function applyCarves(
       }));
       // The pixels dragged into the hole are geometry, not a sprite: the
       // surviving rim grows a tongue of torn metal exactly where the soft body
-      // pushed it, which is the curled lip the footage shows.
-      lips = metal ? pixels.lipPolygons(dir.x, dir.y, 120) : [];
-      state.walls = state.walls.map((w) => (w.id === wall.id ? { ...cut.wall, polygons: lips.length > 0 ? [...bent, ...lips] : bent } : w));
+      // pushed it, which is the curled lip the footage shows. A breach in the
+      // lower half of the panel folds over its free bottom edge.
+      let top = Infinity;
+      let bottom = -Infinity;
+      for (const poly of cut.wall.polygons) {
+        for (const point of poly) { top = Math.min(top, point.y); bottom = Math.max(bottom, point.y); }
+      }
+      const hangsPast = bottom > top && entry.y > top + (bottom - top) * 0.55 ? bottom : undefined;
+      lips = metal ? pixels.lipPolygons(dir.x, dir.y, 120, hangsPast) : [];
+      if (lips.length > 0) pendingFolds.push({ wallId: wall.id, lips });
+      state.walls = state.walls.map((w) => (w.id === wall.id ? { ...cut.wall, polygons: bent } : w));
       // Chips carry the round's momentum, not a fixed kick. A thin plate sheds a
       // handful of torn pieces, not a cloud: keep the largest, bounded.
       const chips = spawnFragmentBodies(
@@ -622,6 +632,17 @@ function applyCarves(
   if (metalEntries.length > 0) {
     for (const hit of metalEntries) state.walls = tearRim(state.walls, hit, 16, hit.material, impactSpeed);
     settleHotMetal(state, { steps: 6 });
+  }
+  // The fold is added last: the hot-metal pass splits and reorders plate
+  // polygons, and a lip caught in that split was what turned the flap into a
+  // fan of strips. Keeping it whole also fixes its index in `foldFrom`, so the
+  // renderer can paint the torn metal with its own scorch.
+  if (pendingFolds.length > 0) {
+    state.walls = state.walls.map((w) => {
+      const pending = pendingFolds.find((p) => p.wallId === w.id);
+      if (!pending) return w;
+      return { ...w, polygons: [...w.polygons, ...pending.lips], foldFrom: w.polygons.length };
+    });
   }
   bodies.push(...newBodies);
   void walls;

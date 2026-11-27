@@ -9,6 +9,35 @@ import { pixelRuns } from './pixel-raster';
 const THERMAL_COLD = { base: 0x16224a, light: 0x1e2d5e, dark: 0x0c1330 };
 
 /**
+ * Folded lip metal. A torn flap is worked, scorched steel -- brown shading into
+ * tan, the colour the reference entry frame shows hanging under the breach. It
+ * deliberately does not use the blackbody ramp: a fold's outer edge sits far
+ * from the hole's bloom, so the ramp painted it magenta and the flap read as
+ * paint rather than metal.
+ */
+const FOLD_COLORS = { base: 0x9a6b3f, light: 0xc79860, dark: 0x54341d };
+
+/**
+ * Folded-lip scorch by local heat: worked tan where the fold leaves the breach,
+ * cooling through brown to the dark free end. This ramp never reaches the
+ * violet/magenta of the plate's blackbody band, which is the whole point -- the
+ * flap is metal, not a patch of the breach bloom.
+ */
+function foldColors(heat: number): { base: number; light: number; dark: number } {
+  const t = Math.max(0, Math.min(1, (heat - 0.22) / 0.68));
+  const blend = (cool: number, hot: number): number => {
+    const mix = (shift: number): number =>
+      Math.round(((cool >> shift) & 0xff) * (1 - t) + ((hot >> shift) & 0xff) * t);
+    return (mix(16) << 16) | (mix(8) << 8) | mix(0);
+  };
+  return {
+    base: blend(0x6b452a, FOLD_COLORS.base),
+    light: blend(0x8a5f3c, FOLD_COLORS.light),
+    dark: blend(0x3a2415, FOLD_COLORS.dark),
+  };
+}
+
+/**
  * Screen-pixel cube size. The recordings show crumble/heat as ~2-3 screen
  * pixels at any zoom — world size therefore shrinks as the camera zooms in.
  * Zooming out merges world area into the same screen pixels (shape-preserving
@@ -53,6 +82,9 @@ export class StructureView {
   private bodiesPainted = -1;
   private thermal = false;
   private thermalGlow: Phaser.GameObjects.Graphics;
+  /** Folded lips sit above the heat field: they are torn metal in front of the
+   * plate face, not a patch of that face to be painted by the breach bloom. */
+  private foldLayer: Phaser.GameObjects.Graphics;
 
   private scene: Phaser.Scene;
   constructor(scene: Phaser.Scene, depth = 6) {
@@ -74,6 +106,7 @@ export class StructureView {
     // blending keeps the glow cheap (one extra quad per hot cell).
     this.thermalGlow = scene.add.graphics().setDepth(depth + 4);
     this.thermalGlow.setBlendMode(Phaser.BlendModes.ADD);
+    this.foldLayer = scene.add.graphics().setDepth(depth + 5);
     // Thermal stain belongs to the wall face only, so it is clipped to the
     // surviving polygons: a bloom over a breach must not float in the air where
     // the geometry was blown away. The mask source holds the same wall shapes.
@@ -199,6 +232,7 @@ export class StructureView {
     detail.clear();
     const mask = this.heatMaskSource;
     mask.clear();
+    this.foldLayer.clear();
     if (!this.lastWalls || this.lastWalls.walls.length === 0) {
       this.rt.clear();
       this.rt.setVisible(false);
@@ -236,6 +270,21 @@ export class StructureView {
     const cell = this.bakeCell();
     const focusCell = 1;
     mask.fillStyle(0xffffff, 1);
+    const thermalFold = { base: thermalTone(0.68), light: thermalTone(0.76), dark: thermalTone(0.56) };
+    /** Hottest bloom over a fold's centroid: the fold cools as it hangs. */
+    const foldPalette = (poly: Polygon): { base: number; light: number; dark: number } => {
+      if (this.thermal) return thermalFold;
+      let cx = 0;
+      let cy = 0;
+      for (const p of poly) { cx += p.x / poly.length; cy += p.y / poly.length; }
+      let heat = 0;
+      for (const r of this.lastWalls?.heat ?? []) {
+        const radius = r.radius > 0 ? r.radius : 20;
+        const d = Math.hypot(r.x - cx, r.y - cy);
+        if (d < radius) heat = Math.max(heat, r.heat * (1 - d / radius));
+      }
+      return foldColors(heat);
+    };
     for (const wall of this.lastWalls.walls) {
       const focused = wall.id === this.focusWall;
       const g = focused ? detail : bake;
@@ -244,11 +293,18 @@ export class StructureView {
       // heat paints it. That is what makes the applied heat readable on wood,
       // brick and steel with one scale.
       const colors = this.thermal ? THERMAL_COLD : def.colors;
-      for (const poly of wall.polygons) {
+      for (let index = 0; index < wall.polygons.length; index += 1) {
+        const poly = wall.polygons[index]!;
         // The bend is already in the geometry (sim/wall-deform.ts), so the
         // renderer just draws the polygons it is given: collision, support and
         // pixels all agree about the deformed plate.
         const refined = refinePolygon(poly, 12);
+        if (wall.foldFrom !== undefined && index >= wall.foldFrom) {
+          // Torn lips are not plate face: draw them on their own layer above
+          // the heat so the breach bloom cannot repaint their edges violet.
+          this.fillPixelPoly(this.foldLayer, refined, foldPalette(refined), focused ? focusCell : cell);
+          continue;
+        }
         this.fillPixelPoly(g, refined, colors, focused ? focusCell : cell);
         mask.beginPath();
         mask.moveTo(refined[0]!.x, refined[0]!.y);
@@ -440,6 +496,7 @@ export class StructureView {
     this.bodyLayer.setVisible(visible);
     this.heatLayer.setVisible(visible);
     this.thermalGlow.setVisible(visible);
+    this.foldLayer.setVisible(visible);
   }
 }
 

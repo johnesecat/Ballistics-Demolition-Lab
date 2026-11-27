@@ -10,6 +10,13 @@ export interface Wall {
   material: MaterialId;
   polygons: Polygon[];
   /**
+   * Index in `polygons` where the folded lips start. A lip is torn metal folded
+   * over the breach, not plate face: the renderer paints it with its own brown
+   * scorch instead of the hot-metal ramp, so its edges cannot read as the
+   * plate's violet fringe. Optional and cleared whenever the wall is cut again.
+   */
+  foldFrom?: number;
+  /**
    * Bolted/anchored geometry (the authored test range). Anchored walls ignore
    * the support solve until they take damage, so display blocks separated by
    * air gaps do not fall on their own. Fracturing a wall clears the flag.
@@ -450,6 +457,9 @@ export function subtractPixelCells(
   const result: Wall = { ...wall, polygons };
   if (stillBolted) result.anchored = true;
   else delete result.anchored;
+  // The old lip polygons did not survive this cut; the new fold list is
+  // appended by the simulator after the hot-metal settle has finished.
+  delete result.foldFrom;
   return { wall: result, fragments };
 }
 

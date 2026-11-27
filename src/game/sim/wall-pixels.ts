@@ -669,8 +669,12 @@ export class WallPixels implements BodyWorld {
    *
    * Bounded (limit) and deterministic: pixels are walked in raster order and the
    * runs are sorted along the face.
+   *
+   * `hangBelow` is the free lower edge of the panel, when the breach sits in its
+   * lower half: the fold then drapes over that edge instead of stopping at the
+   * breach, which is the silhouette the reference entry frame shows.
    */
-  lipPolygons(dirX: number, dirY: number, limit = 96): Array<Array<{ x: number; y: number }>> {
+  lipPolygons(dirX: number, dirY: number, limit = 96, hangBelow?: number): Array<Array<{ x: number; y: number }>> {
     const out: Array<Array<{ x: number; y: number }>> = [];
     if (this.count === 0) return out;
     const LIMIT = Math.max(0, limit);
@@ -705,6 +709,28 @@ export class WallPixels implements BodyWorld {
       rimDX.push(dx);
       rimDY.push(dy);
     }
+    if (rimT.length === 0) return out;
+    // A punched plate has a rim on both faces. The fold belongs to the entry
+    // face -- the side the round came from -- or it grows on the exit crater and
+    // hangs behind the plate, where the shooter cannot see it. Keep the near
+    // half of the rim along the bore and let the exit petals stay flat.
+    let aMin = Infinity;
+    let aMax = -Infinity;
+    for (const a of rimA) { if (a < aMin) aMin = a; if (a > aMax) aMax = a; }
+    const faceLimit = aMin + (aMax - aMin) * 0.45;
+    let keep = 0;
+    for (let i = 0; i < rimT.length; i += 1) {
+      if (rimA[i]! > faceLimit) continue;
+      rimT[keep] = rimT[i]!;
+      rimA[keep] = rimA[i]!;
+      rimDX[keep] = rimDX[i]!;
+      rimDY[keep] = rimDY[i]!;
+      keep += 1;
+    }
+    rimT.length = keep;
+    rimA.length = keep;
+    rimDX.length = keep;
+    rimDY.length = keep;
     if (rimT.length === 0) return out;
 
     // Sort along the face and cut into contiguous runs: a gap in the rim is the
@@ -744,7 +770,7 @@ export class WallPixels implements BodyWorld {
       // bore cannot grow a spike. It hangs about half the width of the tear,
       // which is what the entry frames show: a flap that reaches the bottom of
       // the breach, not a nib at its edge.
-      const reach = Math.min(26, 8 + dragged * 6);
+      const baseReach = Math.min(26, 8 + dragged * 6);
       // The fold spans the rim it grew from. A punched plate folds a flap as
       // wide as the hole it left -- capping this at a few pixels grew a pair of
       // wings instead of a tongue, and the footage's flap covers most of the
@@ -757,18 +783,63 @@ export class WallPixels implements BodyWorld {
       const foldX = -ux * 0.55;
       const foldY = -uy * 0.55 + 0.85;
       const foldLen = Math.hypot(foldX, foldY) || 1;
-      const tipX = foldX / foldLen;
-      const tipY = foldY / foldLen;
       const rootX = toX(mid, rootA);
       const rootY = toY(mid, rootA);
+      // A fold rooted near the bottom of a panel keeps going: gravity carries
+      // the torn metal over the free edge, so it hangs past the plate's
+      // silhouette instead of ending in mid-face. On an edge-on plate the rim
+      // run and the drop are both vertical, so a straight tongue is a
+      // zero-width sliver; the flap instead peels back off the breach as a
+      // broad shelf and then sags from its lower corner.
+      const bottomY = hangBelow === undefined ? 0 : hangBelow + PIXEL * 3;
+      if (hangBelow !== undefined && bottomY - rootY > baseReach) {
+        const span = Math.max(halfSpan, 5);
+        const peel = Math.max(baseReach, 14);
+        const backX = -ux * 0.92;
+        const backY = -uy * 0.92 + 0.39;
+        const backLen = Math.hypot(backX, backY) || 1;
+        const peelX = (backX / backLen) * peel;
+        const peelY = (backY / backLen) * peel;
+        const a = { x: rootX + tx * span, y: rootY + ty * span };
+        const b = { x: rootX - tx * span, y: rootY - ty * span };
+        const c = { x: b.x + peelX, y: b.y + peelY };
+        // The sheet keeps the width it peeled out to as it falls, so the drape
+        // has a face instead of being a vertical sliver. Its right edge runs
+        // back up to the rim, and the free edge is torn short on one side, so
+        // the profile is a wedge rather than a rectangle pasted on the plate.
+        const e = { x: a.x - span * 0.9, y: bottomY - 4 };
+        const splitY = rootY + (bottomY - rootY) * 0.55;
+        const rightAt = (y: number): number => a.x + (e.x - a.x) * ((y - a.y) / ((e.y - a.y) || 1));
+        // Two pieces share the crease: the worked root and the cooler hanging
+        // end. One flat polygon read as a plank; the fold line and the darker
+        // free end are what make it read as bent metal.
+        out.push([
+          a,
+          b,
+          c,
+          { x: c.x, y: splitY },
+          { x: rightAt(splitY), y: splitY },
+        ]);
+        out.push([
+          { x: c.x, y: splitY },
+          { x: c.x, y: bottomY },
+          e,
+          { x: rightAt(splitY), y: splitY },
+        ]);
+        continue;
+      }
+      // Short tears petal back toward the shooter; a long drape hangs close to
+      // the face under its own weight rather than waving out into the air.
+      const tipX = foldX / foldLen;
+      const tipY = foldY / foldLen;
       // Tapered tongue: the free end is narrower than the fold line, so the
       // silhouette reads as folded metal rather than a rectangle pasted on.
       const narrow = halfSpan * 0.45;
       out.push([
         { x: rootX - tx * halfSpan, y: rootY - ty * halfSpan },
         { x: rootX + tx * halfSpan, y: rootY + ty * halfSpan },
-        { x: rootX + tx * narrow + tipX * reach, y: rootY + ty * narrow + tipY * reach },
-        { x: rootX - tx * narrow + tipX * reach, y: rootY - ty * narrow + tipY * reach },
+        { x: rootX + tx * narrow + tipX * baseReach, y: rootY + ty * narrow + tipY * baseReach },
+        { x: rootX - tx * narrow + tipX * baseReach, y: rootY - ty * narrow + tipY * baseReach },
       ]);
     }
     return out;
