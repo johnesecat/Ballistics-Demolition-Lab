@@ -576,6 +576,23 @@ export class EffectDirector {
       angleMin: back - 88,
       angleMax: back + 88,
     });
+    // The footage shows a short, dark wisp climbing off a steel entry: the
+    // paint and the oil on the plate burn even where the steel itself only
+    // scorches. Without it the flash reads as a lamp rather than a hit.
+    addPixelParticles(this.scene, x, y - radius * 0.4, 'smoke', {
+      count: this.reduced ? 2 : 5,
+      color: 0x1d1f27,
+      speedMin: 10,
+      speedMax: 46,
+      lifespanMin: 420,
+      lifespanMax: 900,
+      gravityY: -26,
+      scaleMin: 0.8,
+      scaleMax: 1.9,
+      alpha: 0.4,
+      angleMin: -118,
+      angleMax: -62,
+    });
     this.spawnDebris(x, y, material, this.reduced ? 2 : 5, 0.32);
     this.glowAt(x, y, radius * 1.15, 0xffb060, 340, 0.3);
   }
@@ -834,10 +851,7 @@ export class EffectDirector {
     if (!shock) this.ringAt(event.x, event.y, radius * 0.7, 0xffe0a8, 250);
     const material = event.material ?? 'concrete';
     this.materialParticles(event.x, event.y, material, this.reduced ? 6 : 14, 1.25);
-    // A thin wisp only. The recordings show chips and sparks, not a smoke
-    // cloud; the old 10 puffs at up to 3.2x read as grey balloons.
-    // No smoke balloons: the reference blast is a flash, straight sparks and
-    // masonry chips. A single tiny dust puff keeps the volume readable.
+    // A thin wisp of dust hangs at the face.
     addPixelParticles(this.scene, event.x, event.y, 'dust', {
       count: 1,
       color: shock ? 0xb8a78a : 0xd8b48a,
@@ -850,14 +864,34 @@ export class EffectDirector {
       scaleMax: 0.8,
       alpha: 0.15,
     });
-    // Embers: bright streaks that rise then fall.
+    // The recordings show a dark plume lifting off the blast and carrying the
+    // embers with it -- small puffs that rise and live for a second and a half,
+    // not one grey balloon hanging over the hole.
+    if (!shock) {
+      addPixelParticles(this.scene, event.x, event.y - radius * 0.3, 'smoke', {
+        count: this.reduced ? 2 : 6,
+        color: 0x22232b,
+        speedMin: 18,
+        speedMax: 66,
+        lifespanMin: 650,
+        lifespanMax: 1500,
+        gravityY: -34,
+        scaleMin: 0.7,
+        scaleMax: 1.6,
+        alpha: 0.34,
+        angleMin: -122,
+        angleMax: -58,
+      });
+    }
+    // Embers: bright streaks that rise, hang, then fall. The footage's embers
+    // are still in the air a second after the wall is gone.
     addPixelParticles(this.scene, event.x, event.y, 'spark', {
-      count: this.reduced ? 5 : 16,
+      count: this.reduced ? 5 : 22,
       color: color,
       speedMin: 40,
       speedMax: 260,
       lifespanMin: 200,
-      lifespanMax: 700,
+      lifespanMax: 1150,
       gravityY: 320,
       scaleMin: 1,
       scaleMax: 0.15,

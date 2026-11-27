@@ -2,7 +2,7 @@ import Phaser from 'phaser';
 import { AIM, CAMERA, CANNON, EFFECT_LIMITS, POWER, WORLD, shotCameraFrame } from './config';
 import { AMMO, getAmmo } from './ammo/catalogue';
 import type { AmmoDef } from './ammo/types';
-import type { Settings } from './save';
+import { DEFAULT_SETTINGS, type Settings } from './save';
 import { ALL_STAGES } from './stages/campaign';
 import { buildStage } from './stages/generator';
 import type { BuiltStage, StageSnapshot } from './stages/types';
@@ -947,6 +947,44 @@ export class BattleScene extends Phaser.Scene {
         durationMs: playback.result.durationMs,
       });
     }
+  }
+
+  /**
+   * Developer harness (?debug): the imp_a acceptance shot, played by the
+   * shipped renderer instead of a schematic.
+   *
+   * A 210u thin steel plate, 12u thick, hit at 4 degrees by a full-drive AP
+   * solid round. The stage is synthetic because no campaign battery carries a
+   * plate that thin, and the point of the harness is to judge the entry -- the
+   * flash, the scorch, the torn lip and the debris -- through the same effects,
+   * structure and playback code the player sees.
+   */
+  debugPlateShot(): ShotResult | null {
+    if (!this.debug) return null;
+    const base = buildStage(ALL_STAGES[0]!);
+    const stage: BuiltStage = {
+      ...base,
+      wallState: {
+        walls: [{
+          id: 'plate',
+          material: 'steel',
+          anchored: true,
+          polygons: [[{ x: 800, y: 110 }, { x: 812, y: 110 }, { x: 812, y: 320 }, { x: 800, y: 320 }]],
+        }],
+        heat: [],
+        groundY: WORLD.groundY,
+        version: base.wallState.version,
+      },
+      core: { ...base.core, destroyed: true, hp: 0 },
+      relays: [],
+      coreCoverCells: [],
+    };
+    this.startMission(stage, 'ap-solid-shot', this.settings ?? DEFAULT_SETTINGS);
+    this.aim = { angleDeg: 4, power: 441, mode: 'straight', ammoId: 'ap-solid-shot' };
+    this.cannon.setAim(this.aim.angleDeg);
+    this.previewDirty = true;
+    if (!this.fire()) return null;
+    return this.playback?.result ?? null;
   }
 
   setReplaySpeed(speed: number): void {

@@ -188,9 +188,15 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
       let lastImpact: ImpactInfo = impact;
       let reportedEntry = 0;
       let reportedBounce = 0;
+      // When the round finished boring, not when it finished flying. The flight
+      // loop keeps running after the exit so the replay has a track to draw, and
+      // stamping the hole at the end of that put the breach a second after the
+      // flash -- the round visibly passed through an intact plate.
+      let carveTime = 0;
       for (let i = 0; i < limit; i += 1) {
         body.stepOnce(pixels);
         simTime += BODY_DT;
+        if (carveTime === 0 && body.isClear) carveTime = simTime;
         // New wall faces the body has reached (a second plate, the far side of
         // a sandwich) become their own impact so the replay can punctuate them.
         const contacts = body.contacts;
@@ -267,14 +273,15 @@ export function simulateShotWalls(def: StageDefinition, snapshot: StageSnapshot,
       }
 
       // Wall damage is what the body removed, turned back into geometry.
+      const carveMs = carveTime > 0 ? carveTime : simTime;
       if (pixels) {
         if (damage) {
-          const carve = applyCarves(state, pixels, state.walls, contactDir, rng, effects, bodies, damageEvents, simTime, ammo, body.entrySpeed());
+          const carve = applyCarves(state, pixels, state.walls, contactDir, rng, effects, bodies, damageEvents, carveMs, ammo, body.entrySpeed());
           cellDamageArea += carve.fragments;
           carvedTotal = pixels.carved.length;
-          flightBodies.push(...carve.newBodies.map((b) => ({ ...b, spawnT: simTime * 1000 })));
+          flightBodies.push(...carve.newBodies.map((b) => ({ ...b, spawnT: carveMs * 1000 })));
           if (carve.fragments > 0) {
-            damageEvents.push({ t: simTime * 1000, cells: [], wallState: cloneWallState(state), spawnedBodies: carve.newBodies.map((b) => ({ ...b })), x: hitInfo.x, y: hitInfo.y, label: 'PENETRATION' });
+            damageEvents.push({ t: carveMs * 1000, cells: [], wallState: cloneWallState(state), spawnedBodies: carve.newBodies.map((b) => ({ ...b })), x: hitInfo.x, y: hitInfo.y, label: 'PENETRATION' });
           }
         }
       }
@@ -554,15 +561,19 @@ function applyCarves(
       // confetti because only isolated stamps land on the plate.
       const tx = -dir.y;
       const ty = dir.x;
-      const reach = 26 + heatScale * 18;
-      for (let d = -reach; d <= reach; d += 5) {
+      // Narrow enough to read as a scorch on the plate rather than a painted
+      // stripe, and spaced so the outside of the band stays a speckle: everyone
+      // who has watched the footage describes the far edge as a violet fringe,
+      // not a solid ribbon.
+      const reach = 18 + heatScale * 12;
+      for (let d = -reach; d <= reach; d += 9) {
         const t = Math.abs(d) / reach;
         addHeat(
           state,
           holeX + tx * d,
           holeY + ty * d,
-          0.9 - t * 0.52,
-          7.5 - t * 2.5,
+          0.95 - t * 0.7,
+          8 - t * 3,
           wall.material,
         );
       }

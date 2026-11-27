@@ -650,12 +650,18 @@ export class WallPixels implements BodyWorld {
   }
 
   /**
-   * The curled lip: every surviving pixel on the edge of a hole whose own
-   * plastic displacement points into that hole contributes a small quad. The
-   * quads are what the wall's metal was dragged into; they are geometry, not a
-   * sprite, so the plate silhouette itself shows the tongue of torn metal.
+   * The curled lip: the torn metal around a hole, folded into the breach.
    *
-   * Bounded (LIP_LIMIT) and deterministic: pixels are walked in raster order.
+   * Every surviving pixel on the edge of the hole whose own plastic
+   * displacement points into it is a rim cell. Adjacent rim cells are one
+   * continuous edge, so they fold into ONE tongue -- emitting a quad per pixel
+   * gave a comb of hairs, which is not what a torn plate looks like. The tongue
+   * is rooted on the rim, reaches as far as the metal was actually dragged, and
+   * sags under its own weight, which is the broad downward flap the footage
+   * shows under the entry.
+   *
+   * Bounded (limit) and deterministic: pixels are walked in raster order and the
+   * runs are sorted along the face.
    */
   lipPolygons(dirX: number, dirY: number, limit = 96): Array<Array<{ x: number; y: number }>> {
     const out: Array<Array<{ x: number; y: number }>> = [];
@@ -664,38 +670,95 @@ export class WallPixels implements BodyWorld {
     const norm = Math.hypot(dirX, dirY) || 1;
     const ux = dirX / norm;
     const uy = dirY / norm;
-    for (let i = 0; i < this.count && out.length < LIMIT; i += 1) {
+    // Face tangent, and the raster step into the bore.
+    const tx = -uy;
+    const ty = ux;
+    const stepX = Math.abs(ux) >= Math.abs(uy) ? (ux > 0 ? 1 : -1) : 0;
+    const stepY = stepX === 0 ? (uy > 0 ? 1 : -1) : 0;
+    const cells = this.cells;
+
+    // Rim cells, in face coordinates: `t` along the rim, `a` along the bore.
+    const rimT: number[] = [];
+    const rimA: number[] = [];
+    const rimDX: number[] = [];
+    const rimDY: number[] = [];
+    for (let i = 0; i < this.count; i += 1) {
       if (this.nDetached[i] || this.nPinned[i]) continue;
-      // The rim is dragged by the shot, even where the spring network only
-      // moved it a fraction of a pixel: the lip points down the bore, and the
-      // plastic displacement sets how far it curled.
-      const amount = Math.hypot(this.nX[i]! - this.nRestX[i]!, this.nY[i]! - this.nRestY[i]!);
-      if (amount < 0.2) continue;
+      const dx = this.nX[i]! - this.nRestX[i]!;
+      const dy = this.nY[i]! - this.nRestY[i]!;
+      if (Math.hypot(dx, dy) < 0.2) continue;
       const cell = this.nCell[i]!;
+      if (cells[cell] === 0) continue;
       // Only pixels being pushed into a hole make a lip. A pixel pushed toward
       // open air at the outer silhouette is just a dented edge.
-      const stepX = Math.abs(ux) >= Math.abs(uy) ? (ux > 0 ? 1 : -1) : 0;
-      const stepY = stepX === 0 ? (uy > 0 ? 1 : -1) : 0;
       const ahead = cell + stepY * this.cols + stepX;
-      if (ahead < 0 || ahead >= this.cells.length || this.cells[ahead] !== 0) continue;
-      const baseX = this.nX[i]!;
-      const baseY = this.nY[i]!;
-      // Length is how far this pixel was dragged, capped so a deep bore cannot
-      // grow a spike; width is the pixel.
-      // A lip is a strip of metal dragged into the breach, not a spike: it
-      // spans the full pixel and reaches a third of the way across the hole.
-      // A lip is a band of metal, not a hair: two pixels wide along the rim and
-      // up to two round-diameters into the breach, so adjacent rim cells merge
-      // into the continuous curled tongue the footage shows.
-      const length = Math.min(14, 3 + amount * 4);
-      const halfW = PIXEL * 1.5;
-      const px = -uy * halfW;
-      const py = ux * halfW;
+      if (ahead < 0 || ahead >= cells.length || cells[ahead] !== 0) continue;
+      rimT.push(this.nX[i]! * tx + this.nY[i]! * ty);
+      rimA.push(this.nX[i]! * ux + this.nY[i]! * uy);
+      rimDX.push(dx);
+      rimDY.push(dy);
+    }
+    if (rimT.length === 0) return out;
+
+    // Sort along the face and cut into contiguous runs: a gap in the rim is the
+    // end of that fold, not a reason to bridge across solid metal.
+    const order = rimT.map((_, i) => i).sort((p, q) => rimT[p]! - rimT[q]!);
+    const runs: number[][] = [];
+    let run: number[] = [order[0]!];
+    for (let i = 1; i < order.length; i += 1) {
+      const at = order[i]!;
+      if (rimT[at]! - rimT[order[i - 1]!]! > PIXEL * 1.6) {
+        runs.push(run);
+        run = [];
+      }
+      run.push(at);
+    }
+    runs.push(run);
+
+    const toX = (t: number, a: number): number => t * tx + a * ux;
+    const toY = (t: number, a: number): number => t * ty + a * uy;
+    for (const group of runs) {
+      if (out.length >= LIMIT) break;
+      let tMin = Infinity;
+      let tMax = -Infinity;
+      let aSum = 0;
+      let dxSum = 0;
+      let dySum = 0;
+      for (const at of group) {
+        tMin = Math.min(tMin, rimT[at]!);
+        tMax = Math.max(tMax, rimT[at]!);
+        aSum += rimA[at]!;
+        dxSum += rimDX[at]!;
+        dySum += rimDY[at]!;
+      }
+      const rootA = aSum / group.length;
+      const dragged = Math.hypot(dxSum / group.length, dySum / group.length);
+      // The tongue reaches as far as the metal was dragged, capped so a deep
+      // bore cannot grow a spike. It is a flap the width of the breach and about
+      // as tall again: a nib at the hole's edge reads as a torn pixel, not as a
+      // plate that folded.
+      const reach = Math.min(18, 5 + dragged * 5);
+      // The fold spans the rim it grew from: a hole's whole edge folds, leaving
+      // the rest of the breach dark.
+      const mid = (tMin + tMax) * 0.5;
+      const halfSpan = Math.min(tMax - tMin, PIXEL * 7) * 0.5 + PIXEL;
+      // Metal punched by a round petals BACK toward the shooter and sags: it
+      // does not keep travelling into the bore, where it would be hidden behind
+      // the plate. This is the direction the flap is visible from.
+      const foldX = -ux * 0.55;
+      const foldY = -uy * 0.55 + 0.85;
+      const foldLen = Math.hypot(foldX, foldY) || 1;
+      const tipX = foldX / foldLen;
+      const tipY = foldY / foldLen;
+      const rootX = toX(mid, rootA);
+      const rootY = toY(mid, rootA);
+      // Tapered tongue: the free end is narrower than the fold line.
+      const narrow = halfSpan * 0.55;
       out.push([
-        { x: baseX + px, y: baseY + py },
-        { x: baseX + ux * length + px, y: baseY + uy * length + py },
-        { x: baseX + ux * length - px, y: baseY + uy * length - py },
-        { x: baseX - px, y: baseY - py },
+        { x: rootX - tx * halfSpan, y: rootY - ty * halfSpan },
+        { x: rootX + tx * halfSpan, y: rootY + ty * halfSpan },
+        { x: rootX + tx * narrow + tipX * reach, y: rootY + ty * narrow + tipY * reach },
+        { x: rootX - tx * narrow + tipX * reach, y: rootY - ty * narrow + tipY * reach },
       ]);
     }
     return out;

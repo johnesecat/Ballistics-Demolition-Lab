@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { ProjectileBodySim, BODY_DT, type BodyWorld } from '../src/game/sim/body-sim';
+import { ProjectileBodySim, BODY_DT, PIXEL, type BodyWorld } from '../src/game/sim/body-sim';
 import { WallPixels } from '../src/game/sim/wall-pixels';
 import type { Wall } from '../src/game/sim/fracture';
 
@@ -162,6 +162,24 @@ function runToRest(sim: ProjectileBodySim, world: BodyWorld, seconds = 1.5): voi
   const lips = whole.lipPolygons(1, 0, 32);
   assert(lips.length > 0, `a hole in torn metal grows a lip (${lips.length} quads)`);
   assert(lips.every((quad) => quad.length === 4), 'each lip quad is a closed four-point strip');
+
+  // A hole's rim is one continuous edge of metal, not a row of hairs: adjacent
+  // rim cells fold into a single tongue, wide enough to read as a flap and
+  // reaching into the breach the way the footage's curled lip does.
+  const slotted = plateWorld();
+  slotted.armSoftBody(30, 0);
+  for (let i = 0; i < 24; i += 1) {
+    slotted.push(30, 0, 600, 0, 2);
+    slotted.stepSoftBody(BODY_DT);
+  }
+  for (let y = -8; y <= 8; y += PIXEL) slotted.carve(39, y);
+  const flaps = slotted.lipPolygons(1, 0, 32);
+  assert(flaps.length > 0, `a slotted plate grows a lip (${flaps.length})`);
+  assert(flaps.length <= 4, `rim cells merge into a flap per edge, not a comb (${flaps.length} quads)`);
+  const widest = Math.max(...flaps.map((quad) => Math.hypot(quad[1]!.x - quad[0]!.x, quad[1]!.y - quad[0]!.y)));
+  assert(widest >= PIXEL * 3, `the flap spans the rim it grew from (${widest.toFixed(1)}u)`);
+  const deepest = Math.max(...flaps.map((quad) => Math.hypot(quad[2]!.x - quad[0]!.x, quad[2]!.y - quad[0]!.y)));
+  assert(deepest >= PIXEL, `the flap reaches into the breach (${deepest.toFixed(1)}u)`);
 
   // Removing a pixel is what makes the hole: the lattice loses exactly it and
   // the detached pixel no longer contributes a rim offset.

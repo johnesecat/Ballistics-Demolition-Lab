@@ -51,6 +51,7 @@ const LOCAL_COST = 0.35;
 /** Speed below which the body is treated as resting. */
 const REST_SPEED = 14;
 const REST_SECONDS = 0.12;
+
 /** Penetration quality of a cell, from the component it belongs to. */
 const QUALITY: Record<ComponentId, number> = {
   jacket: JACKET_QUALITY,
@@ -318,7 +319,9 @@ export class ProjectileBodySim {
   /** Mean speed, used for the "still moving" test and for the shot audit. */
   speed(): number {
     let sum = 0;
-    for (const node of this.nodes) sum += Math.hypot(node.vx, node.vy);
+    // sqrt, not hypot: this runs over every cell every substep, and hypot's
+    // overflow-safe scaling costs several times as much for the same answer.
+    for (const node of this.nodes) sum += Math.sqrt(node.vx * node.vx + node.vy * node.vy);
     return sum / Math.max(1, this.nodes.length);
   }
 
@@ -450,9 +453,12 @@ export class ProjectileBodySim {
     if (this.steps % 4 === 0) {
       this.detachLoose();
       this.failJacket();
+      // Depth and the rest clock are readouts, not forces. On the same 4-step
+      // schedule they are indistinguishable on screen and stop costing a scan
+      // of every cell on every substep.
+      this.updateDepth();
+      this.checkRest(world, dt * 4);
     }
-    this.updateDepth();
-    this.checkRest(world, dt);
   }
 
   /** First touch: any cell inside a solid pixel, or on the seabed. */
@@ -506,7 +512,7 @@ export class ProjectileBodySim {
       const material = world.materialAt(node.x, node.y);
       if (!material) continue;
       node.touched = true;
-      const speed = Math.hypot(node.vx, node.vy);
+      const speed = Math.sqrt(node.vx * node.vx + node.vy * node.vy);
       const cost = carveCost(material, node.quality);
       const wall = world.wallAt(node.x, node.y);
       // Every contact deforms first: the touched pixel and everything connected
@@ -538,7 +544,7 @@ export class ProjectileBodySim {
       // pile up behind its nose the way the reference impact does.
       const px0 = Math.floor(node.x / PIXEL) * PIXEL;
       const py0 = Math.floor(node.y / PIXEL) * PIXEL;
-      const speed0 = Math.hypot(node.vx, node.vy);
+      const speed0 = Math.sqrt(node.vx * node.vx + node.vy * node.vy);
       let nx = 0; let ny = 0;
       if (speed0 > 1e-3) {
         nx = -node.vx / speed0;
@@ -629,11 +635,13 @@ export class ProjectileBodySim {
   private updateDepth(): void {
     if (!this.entry) return;
     const dir = { x: -this.entry.nx, y: -this.entry.ny };
-    let best = 0;
+    let best = this.maxDepth;
     for (const node of this.nodes) {
       const d = (node.x - this.entry.x) * dir.x + (node.y - this.entry.y) * dir.y;
       if (d > best) best = d;
     }
+    // A running maximum: the readout is "how far into the structure the round
+    // got", so sampling it less often must not lose the deepest frame.
     this.maxDepth = best;
   }
 
@@ -646,9 +654,13 @@ export class ProjectileBodySim {
     // have already taken everything it had. Bleed the last few percent off fast
     // so the wreck comes to rest where the metal put it.
     if (this.kinetic() < this.energy0 * 0.03) {
+      // Same decay per second whatever the check interval: the bleed is a rate,
+      // not a per-call constant, so gating the check must not make a spent round
+      // glide further than it used to.
+      const bleed = Math.pow(0.5, dt / BODY_DT);
       for (const node of this.nodes) {
-        node.vx *= 0.5;
-        node.vy *= 0.5;
+        node.vx *= bleed;
+        node.vy *= bleed;
       }
     }
     this.clearTime = solidUnder ? 0 : this.clearTime + dt;
@@ -930,7 +942,7 @@ export class ProjectileBodySim {
   }
 
   /** Diagnostics: springs broken, hottest cell, bounding box. */
-  stats(): { nodes: number; links: number; free: number; broken: number; heat: number; width: number; height: number } {
+  stats(): { nodes: number; links: number; free: number; broken: number; heat: number; width: number; height: number; steps: number } {
     let x0 = Infinity; let y0 = Infinity; let x1 = -Infinity; let y1 = -Infinity;
     let heat = 0;
     for (const node of this.nodes) {
@@ -946,6 +958,7 @@ export class ProjectileBodySim {
       heat,
       width: Number.isFinite(x0) ? x1 - x0 : 0,
       height: Number.isFinite(y0) ? y1 - y0 : 0,
+      steps: this.steps,
     };
   }
 
